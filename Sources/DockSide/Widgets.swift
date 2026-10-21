@@ -89,19 +89,19 @@ struct ProgressRing<Label: View>: View {
     }
 }
 
-private struct ContentSizeKey: PreferenceKey {
-    static let defaultValue: CGSize = .zero
-    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
-        // 同级的分隔线、留白会带来默认的 0，不能把真正的尺寸覆盖掉
-        let n = nextValue()
-        if n != .zero { value = n }
+/// 每个组件单独测出来的尺寸（id → size）
+private struct ItemSizesKey: PreferenceKey {
+    static let defaultValue: [String: CGSize] = [:]
+    static func reduce(value: inout [String: CGSize], nextValue: () -> [String: CGSize]) {
+        value.merge(nextValue()) { $1 }
     }
 }
 
 // MARK: - 一侧的组件排布
 /// 横向 Dock：左组在 Dock 左边、右组在右边；竖向 Dock：左组在上方、右组在下方（紧凑版）。
 /// 「融进 Dock」样式：紧贴 Dock、补上 Dock 端头的圆角缺口，接缝处一条竖杠，看起来像 Dock 变长了。
-/// 字号按 Dock 粗细自动计算，放不下就整体等比缩小，再不行就隐藏排在后面的组件。
+/// 每个组件先在看不见的地方单独量好尺寸，再直接算出放得下几个、缩放多少：
+/// 字最多缩到 minScale，再放不下就少放末尾的组件。不靠"先显示再缩"的反馈，所以不会闪。
 struct SideView: View {
     @ObservedObject var store: WidgetStore
     let side: Side
@@ -110,11 +110,28 @@ struct SideView: View {
     @AppStorage(Pref.fontScale) private var fontScale = 1.0
     @AppStorage(Pref.glassTint) private var glassTint = 0.3
     @Environment(\.colorScheme) private var scheme
-    @State private var contentSize: CGSize = .zero
-    @State private var available: CGFloat = 0
-    /// 实在放不下时只显示前几个（缩放低于 minScale 就去掉最后一个）
-    @State private var limit = Int.max
+    @State private var itemSizes: [String: CGSize] = [:]
     private let minScale: CGFloat = 0.85   // 字不能缩得太小，低于这个比例就少放一个组件
+
+    private struct Plan { var ids: [String]; var scale: CGFloat; var contentLen: CGFloat }
+
+    /// 算出显示哪几个、缩放多少
+    private func plan(all: [String], vertical: Bool, size: CGFloat, avail: CGFloat) -> Plan? {
+        let lens = all.map { id -> CGFloat? in
+            guard let s = itemSizes[id] else { return nil }
+            return vertical ? s.height : s.width
+        }
+        guard !all.isEmpty, lens.allSatisfy({ $0 != nil }), avail > 0 else { return nil }
+        let gapLen: CGFloat = style == "separate" ? size * (vertical ? 0.4 : 0.5) : 1
+        let extra: CGFloat = style == "unified" ? size * 0.8 : 0
+        func content(_ n: Int) -> CGFloat {
+            lens.prefix(n).reduce(0) { $0 + ($1 ?? 0) } + CGFloat(max(0, n - 1)) * gapLen
+        }
+        var n = all.count
+        while n > 1, (content(n) + extra) * minScale > avail { n -= 1 }
+        let len = content(n)
+        return Plan(ids: Array(all.prefix(n)), scale: min(1, avail / (len + extra)), contentLen: len)
+    }
 
     var body: some View {
         GeometryReader { geo in
@@ -122,54 +139,74 @@ struct SideView: View {
             let merged = style == "merged"
             let cross = vertical ? geo.size.width : geo.size.height
             let r = merged ? dock.radius : 0
-            let mainAvail = (vertical ? geo.size.height : geo.size.width) - (merged ? r + cross * 0.45 : 0)
+            let avail = (vertical ? geo.size.height : geo.size.width) - (merged ? r + cross * 0.45 : 0)
             let fontSize = max(9, cross * (vertical ? 0.2 : 0.24) * fontScale)
             let all = (store.selected[side] ?? []).filter { widgetDef($0) != nil }
-            let ids = Array(all.prefix(limit))
-            let need = vertical ? contentSize.height : contentSize.width
-            let scale: CGFloat = need > 0 ? min(1, mainAvail / need) : 1
+            let p = plan(all: all, vertical: vertical, size: fontSize, avail: avail)
             let nearDock: Alignment = vertical ? (side == .left ? .bottom : .top) : (side == .left ? .trailing : .leading)
             let anchor: UnitPoint = vertical ? (side == .left ? .bottom : .top) : (side == .left ? .trailing : .leading)
 
-            Group {
-                if ids.isEmpty {
-                    Color.clear
-                } else if merged {
-                    mergedBar(ids: ids, vertical: vertical, size: fontSize, cross: cross, r: r, scale: scale)
-                } else {
-                    measured(row(ids: ids, vertical: vertical, size: fontSize, cross: cross), size: fontSize, vertical: vertical)
-                        .scaleEffect(scale, anchor: anchor)
+            ZStack(alignment: nearDock) {
+                // 看不见的测量层：每个组件单独量尺寸
+                measureLayer(all: all, vertical: vertical, size: fontSize, cross: cross, merged: merged)
+                    .fixedSize()
+                    .hidden()
+                    .frame(width: 0, height: 0)
+
+                if let p {
+                    if merged {
+                        mergedBar(plan: p, vertical: vertical, size: fontSize, cross: cross, r: r)
+                    } else {
+                        env(row(ids: p.ids, vertical: vertical, size: fontSize, cross: cross), size: fontSize, vertical: vertical)
+                            .fixedSize()
+                            .scaleEffect(p.scale, anchor: anchor)
+                    }
                 }
             }
             .frame(width: geo.size.width, height: geo.size.height, alignment: nearDock)
-            .onAppear { available = mainAvail }
-            .onChange(of: geo.size) { _ in available = mainAvail; limit = Int.max }
-            .onChange(of: all) { _ in limit = Int.max }
-            .onChange(of: style) { _ in limit = Int.max }
-            .onChange(of: dock.vertical) { _ in limit = Int.max }
         }
-        .onPreferenceChange(ContentSizeKey.self) { size in
-            contentSize = size
-            fitCheck()
+        .onPreferenceChange(ItemSizesKey.self) { sizes in
+            // 只在有明显变化时更新，避免秒数跳动引起来回重算
+            let changed = sizes.contains { id, s in
+                guard let old = itemSizes[id] else { return true }
+                return abs(old.width - s.width) > 0.5 || abs(old.height - s.height) > 0.5
+            }
+            if changed || sizes.count != itemSizes.count { itemSizes = sizes }
         }
-        .onChange(of: available) { _ in fitCheck() }
     }
 
-    /// 放不下（要缩到 minScale 以下）就去掉最后一个组件；尺寸变了会重新测量、再检查一次，直到放得下
-    private func fitCheck() {
-        let need = dock.vertical ? contentSize.height : contentSize.width
-        let shown = min(limit, (store.selected[side] ?? []).count)
-        if need > 0, available > 0, available / need < minScale, shown > 1 { limit = shown - 1 }
-    }
-
-    /// 测量内容原始尺寸
-    private func measured<V: View>(_ v: V, size: CGFloat, vertical: Bool) -> some View {
+    private func env<V: View>(_ v: V, size: CGFloat, vertical: Bool) -> some View {
         v.environment(\.widgetFontSize, size)
             .environment(\.compact, vertical)
-            .fixedSize()
-            .background(GeometryReader { g in
-                Color.clear.preference(key: ContentSizeKey.self, value: g.size)
-            })
+    }
+
+    /// 单个组件在当前样式下占的样子（和真正排布时一样的留白）
+    @ViewBuilder
+    private func item(_ id: String, vertical: Bool, size: CGFloat, cross: CGFloat) -> some View {
+        if style == "separate" {
+            widgetDef(id)!.make()
+                .padding(.horizontal, size * (vertical ? 0.45 : 0.8))
+                .padding(.vertical, size * 0.45)
+                .frame(width: vertical ? cross : nil, height: vertical ? nil : cross)
+        } else {
+            widgetDef(id)!.make()
+                .padding(vertical ? .vertical : .horizontal, size * 0.55)
+        }
+    }
+
+    private func measureLayer(all: [String], vertical: Bool, size: CGFloat, cross: CGFloat, merged: Bool) -> some View {
+        VStack(spacing: 0) {
+            ForEach(all, id: \.self) { id in
+                item(id, vertical: vertical, size: size, cross: cross)
+                    .fixedSize()
+                    .background(GeometryReader { g in
+                        Color.clear.preference(key: ItemSizesKey.self, value: [id: g.size])
+                    })
+            }
+        }
+        .environment(\.widgetFontSize, size)
+        .environment(\.compact, vertical)
+        .environment(\.widgetInk, merged ? Color.primary : Color.white)
     }
 
     /// Dock 朝向本面板的哪条边
@@ -182,14 +219,15 @@ struct SideView: View {
     }
 
     @ViewBuilder
-    private func mergedBar(ids: [String], vertical: Bool, size: CGFloat, cross: CGFloat, r: CGFloat, scale: CGFloat) -> some View {
+    private func mergedBar(plan p: Plan, vertical: Bool, size: CGFloat, cross: CGFloat, r: CGFloat) -> some View {
         let edge = dockEdge(vertical)
         let dockFirst = edge == .leading || edge == .top
-        let content = measured(row(ids: ids, vertical: vertical, size: size, cross: cross, merged: true), size: size, vertical: vertical)
+        let content = env(row(ids: p.ids, vertical: vertical, size: size, cross: cross, merged: true), size: size, vertical: vertical)
             .environment(\.widgetInk, Color.primary)
-            .scaleEffect(scale)
-            .frame(width: vertical ? nil : contentSize.width * scale,
-                   height: vertical ? contentSize.height * scale : nil)
+            .fixedSize()
+            .scaleEffect(p.scale)
+            .frame(width: vertical ? nil : p.contentLen * p.scale,
+                   height: vertical ? p.contentLen * p.scale : nil)
         let sep = Rectangle()
             .fill(Color.primary.opacity(0.28))
             .frame(width: vertical ? cross * 0.6 : 1, height: vertical ? 1 : cross * 0.6)
