@@ -112,6 +112,7 @@ struct NowPlayingWidget: View {
     @Environment(\.widgetFontSize) private var size
     @Environment(\.compact) private var compact
     @AppStorage(Pref.musicTitleChars) private var titleChars = 7
+    @Environment(\.measuring) private var measuring
 
     var body: some View {
         Group {
@@ -155,8 +156,9 @@ struct NowPlayingWidget: View {
             Button(np.playing ? "暂停" : "播放") { np.toggle() }
             Button("下一首") { np.next() }
         }
-        .onAppear { np.start() }
+        .onAppear { if !measuring { np.start() } }
         .onHover { inside in
+            guard !measuring else { return }
             if inside { LyricsPopover.shared.show() } else { LyricsPopover.shared.scheduleHide() }
         }
     }
