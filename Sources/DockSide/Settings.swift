@@ -1,0 +1,33 @@
+import Foundation
+
+/// 所有偏好设置的键和默认值
+enum Pref {
+    static let style        = "style"         // "unified" 合成一条 | "separate" 分开的胶囊
+    static let fontScale    = "fontScale"     // 1.0 = 自动
+    static let clockSeconds = "clockSeconds"
+    static let clock24h     = "clock24h"
+    static let todoMaxChars = "todoMaxChars"
+    static let todoHover    = "todoHover"
+    static let todoSound    = "todoSound"
+    static let todoAutoClear = "todoAutoClear"
+    static let pomoFocus    = "pomoFocus"
+    static let pomoBreak    = "pomoBreak"
+    static let pomoSound    = "pomoSound"
+    static let pomoAutoNext = "pomoAutoNext"
+
+    static func register() {
+        UserDefaults.standard.register(defaults: [
+            style: "unified", fontScale: 1.0,
+            clockSeconds: true, clock24h: true,
+            todoMaxChars: 20, todoHover: true, todoSound: true, todoAutoClear: true,
+            pomoFocus: 25, pomoBreak: 5, pomoSound: true, pomoAutoNext: true,
+        ])
+    }
+}
+
+/// Dock 当前的方向，布局和组件据此切换横排 / 竖排紧凑版
+final class DockState: ObservableObject {
+    static let shared = DockState()
+    @Published var vertical = false     // Dock 在屏幕左右两侧
+    @Published var dockOnLeft = false
+}
