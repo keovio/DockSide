@@ -105,7 +105,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let gap = merged ? 0 : CGFloat(d.double(forKey: Pref.dockGap))
         let vertical = bg.height > bg.width
         let thickness = vertical ? bg.width : bg.height
-        let r = (thickness * 0.2).rounded()
+        let r = (thickness * 0.206).rounded()   // 实测：64pt 厚的 Dock 圆角半径约 13.2pt
         let overlap = merged ? r : 0          // 融进 Dock 时盖住 Dock 端头的圆角那一段
 
         let state = DockState.shared
