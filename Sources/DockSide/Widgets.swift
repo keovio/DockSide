@@ -114,7 +114,7 @@ struct SideView: View {
     @State private var available: CGFloat = 0
     /// 实在放不下时只显示前几个（缩放低于 minScale 就去掉最后一个）
     @State private var limit = Int.max
-    private let minScale: CGFloat = 0.7
+    private let minScale: CGFloat = 0.85   // 字不能缩得太小，低于这个比例就少放一个组件
 
     var body: some View {
         GeometryReader { geo in
@@ -150,10 +150,16 @@ struct SideView: View {
         }
         .onPreferenceChange(ContentSizeKey.self) { size in
             contentSize = size
-            let need = dock.vertical ? size.height : size.width
-            let shown = min(limit, (store.selected[side] ?? []).count)
-            if need > 0, available > 0, available / need < minScale, shown > 1 { limit = shown - 1 }
+            fitCheck()
         }
+        .onChange(of: available) { _ in fitCheck() }
+    }
+
+    /// 放不下（要缩到 minScale 以下）就去掉最后一个组件；尺寸变了会重新测量、再检查一次，直到放得下
+    private func fitCheck() {
+        let need = dock.vertical ? contentSize.height : contentSize.width
+        let shown = min(limit, (store.selected[side] ?? []).count)
+        if need > 0, available > 0, available / need < minScale, shown > 1 { limit = shown - 1 }
     }
 
     /// 测量内容原始尺寸
@@ -212,7 +218,7 @@ struct SideView: View {
                 // 系统材质比 Dock 浅，压暗一点对上 Dock 的颜色（深色模式少压一些）
                 Color.black.opacity(glassTint * (scheme == .dark ? 0.4 : 1))
             }
-            .clipShape(MergedShape(dockEdge: edge, radius: r, cover: 3), style: FillStyle(eoFill: true))
+            .clipShape(MergedShape(dockEdge: edge, radius: r, cover: 0.5), style: FillStyle(eoFill: true))
         )
     }
 
