@@ -20,6 +20,8 @@ enum Pref {
     static let alignBottom  = "alignBottom"
     static let dockGap      = "dockGap"
     static let glassTint    = "glassTint"
+    static let musicTitleChars = "musicTitleChars"
+    static let countdownChars = "countdownChars"
 
     static func register() {
         UserDefaults.standard.register(defaults: [
@@ -28,6 +30,7 @@ enum Pref {
             todoMaxChars: 20, todoTitleChars: 6, todoHover: true, todoSound: true, todoAutoClear: true,
             pomoFocus: 25, pomoBreak: 5, pomoSound: true, pomoAutoNext: true,
             alignTop: 0.0, alignBottom: 0.0, dockGap: 4.0, glassTint: 0.38,
+            musicTitleChars: 7, countdownChars: 5,
         ])
     }
 }
