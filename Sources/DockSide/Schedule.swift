@@ -64,7 +64,8 @@ final class ScheduleStore: ObservableObject {
 
     private init() {
         refreshAuth()
-        reload()
+        // 推迟到下一轮：避免在 SwiftUI 渲染中途修改 @Published
+        DispatchQueue.main.async { [weak self] in self?.reload() }
         startTimer()
         NotificationCenter.default.addObserver(
             forName: .EKEventStoreChanged, object: ek, queue: .main
