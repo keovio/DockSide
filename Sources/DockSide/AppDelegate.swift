@@ -43,6 +43,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(parent)
         }
         menu.addItem(.separator())
+        let todo = NSMenuItem(title: "待办清单…", action: #selector(openTodos), keyEquivalent: "t")
+        todo.target = self
+        menu.addItem(todo)
+        let imp = NSMenuItem(title: "导入待办…", action: #selector(importTodos), keyEquivalent: "")
+        imp.target = self
+        menu.addItem(imp)
+        menu.addItem(.separator())
 
         if !AXIsProcessTrusted() {
             let ax = NSMenuItem(title: "⚠️ 需要辅助功能权限…", action: #selector(openAccessibility), keyEquivalent: "")
@@ -75,6 +82,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             NSAlert(error: error).runModal()
         }
     }
+
+    @objc private func openTodos() { TodoWindow.show() }
+    @objc private func importTodos() { TodoIO.importFromFile() }
 
     @objc private func openAccessibility() {
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
