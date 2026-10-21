@@ -172,43 +172,45 @@ enum TodoIO {
 }
 
 // MARK: - 超长标题滚动显示
-private struct MarqueeWidthKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
-}
-
-/// 固定宽度的标题：放得下就静止显示，放不下就在这个宽度里滚动
+/// 固定宽度的标题：放得下就静止显示，放不下就在这个宽度里循环滚动（每圈开头停 1.5 秒）。
+/// 文字宽度直接用 NSFont 算，不依赖 SwiftUI 的测量回调，标题一变就立刻知道要不要滚。
 struct Marquee: View {
     let text: String
     let width: CGFloat
-    @State private var fullWidth: CGFloat = 0
+    var fontSize: CGFloat = 13
+    var semibold = true
+
+    private var textWidth: CGFloat {
+        let font = NSFont.systemFont(ofSize: fontSize, weight: semibold ? .semibold : .medium)
+        let w = (text as NSString).size(withAttributes: [.font: font]).width
+        return ceil(w * 1.04)   // 圆体比系统字体略宽一点，留余量
+    }
 
     var body: some View {
+        let full = textWidth
         ZStack(alignment: .leading) {
-            if fullWidth <= width {
+            if full <= width {
                 Text(text).fixedSize()
             } else {
                 TimelineView(.animation(minimumInterval: 1.0 / 30)) { ctx in
-                    let gap: CGFloat = 40
-                    let cycle = Double(fullWidth + gap)
-                    let offset = (ctx.date.timeIntervalSinceReferenceDate * 30).truncatingRemainder(dividingBy: cycle)
+                    let gap: CGFloat = max(30, fontSize * 2.5)
+                    let speed: Double = 28          // 点 / 秒
+                    let pause: Double = 1.5
+                    let travel = Double(full + gap) / speed
+                    let t = ctx.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: travel + pause)
+                    let offset = t < pause ? 0 : CGFloat((t - pause) * speed)
                     HStack(spacing: gap) {
                         Text(text).fixedSize()
                         Text(text).fixedSize()
                     }
-                    .offset(x: -CGFloat(offset))
+                    .offset(x: -offset)
                 }
             }
         }
+        .font(.system(size: fontSize, weight: semibold ? .semibold : .medium, design: .rounded))
+        .lineLimit(1)
         .frame(width: width, alignment: .leading)
         .clipped()
-        .background(
-            Text(text).fixedSize().hidden()
-                .background(GeometryReader { g in
-                    Color.clear.preference(key: MarqueeWidthKey.self, value: g.size.width)
-                })
-        )
-        .onPreferenceChange(MarqueeWidthKey.self) { fullWidth = $0 }
     }
 }
 
@@ -240,8 +242,7 @@ struct TodoWidget: View {
                     }
                     VStack(alignment: .leading, spacing: size * 0.08) {
                         if let first = pending.first {
-                            Marquee(text: first.title, width: size * 0.95 * CGFloat(titleChars))
-                                .font(.system(size: size * 0.95, weight: .semibold, design: .rounded))
+                            Marquee(text: first.title, width: size * 0.95 * CGFloat(titleChars), fontSize: size * 0.95)
                         } else {
                             Text("全部完成").font(.system(size: size * 0.95, weight: .semibold, design: .rounded))
                                 .frame(width: size * 0.95 * CGFloat(titleChars), alignment: .leading)
