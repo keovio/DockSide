@@ -24,6 +24,44 @@ enum DockLocator {
         return CGRect(x: pos.x, y: primaryH - pos.y - size.height, width: size.width, height: size.height)
     }
 
+    /// Dock 玻璃底的实际范围：顺着 Dock 的方向取图标列表的范围，垂直方向取图标本身的范围
+    /// （实测 macOS 15：列表比玻璃底高 5pt，图标的范围和玻璃底重合）
+    static func backgroundFrame() -> CGRect? {
+        guard let dock = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first else { return nil }
+        let app = AXUIElementCreateApplication(dock.processIdentifier)
+        var children: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, kAXChildrenAttribute as CFString, &children) == .success,
+              let list = (children as? [AXUIElement])?.first(where: { role(of: $0) == kAXListRole }),
+              let listFrame = frame(of: list) else { return nil }
+        var itemsRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(list, kAXChildrenAttribute as CFString, &itemsRef)
+        let items = ((itemsRef as? [AXUIElement]) ?? []).compactMap(frame(of:))
+        guard let first = items.first else { return cocoa(listFrame) }
+        let union = items.dropFirst().reduce(first) { $0.union($1) }
+        let vertical = listFrame.height > listFrame.width
+        let bg = vertical
+            ? CGRect(x: union.minX, y: listFrame.minY, width: union.width, height: listFrame.height)
+            : CGRect(x: listFrame.minX, y: union.minY, width: listFrame.width, height: union.height)
+        return cocoa(bg)
+    }
+
+    /// AX 原始坐标（左上原点）
+    private static func frame(of el: AXUIElement) -> CGRect? {
+        var p: CFTypeRef?, s: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(el, kAXPositionAttribute as CFString, &p) == .success,
+              AXUIElementCopyAttributeValue(el, kAXSizeAttribute as CFString, &s) == .success,
+              let pv = p, let sv = s else { return nil }
+        var pos = CGPoint.zero, size = CGSize.zero
+        AXValueGetValue(pv as! AXValue, .cgPoint, &pos)
+        AXValueGetValue(sv as! AXValue, .cgSize, &size)
+        return CGRect(origin: pos, size: size)
+    }
+
+    private static func cocoa(_ r: CGRect) -> CGRect {
+        let primaryH = NSScreen.screens.first?.frame.height ?? 0
+        return CGRect(x: r.minX, y: primaryH - r.minY - r.height, width: r.width, height: r.height)
+    }
+
     private static func role(of el: AXUIElement) -> String? {
         var v: CFTypeRef?
         AXUIElementCopyAttributeValue(el, kAXRoleAttribute as CFString, &v)
@@ -110,6 +148,7 @@ enum DockDiagnostics {
             }
         }
         if let f = DockLocator.iconsFrame() { out.append("iconsFrame(cocoa) \(r(f))") }
+        if let f = DockLocator.backgroundFrame() { out.append("backgroundFrame(cocoa) \(r(f))") }
         return out.joined(separator: "\n")
     }
 
