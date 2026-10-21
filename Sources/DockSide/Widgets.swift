@@ -13,6 +13,7 @@ let allWidgets: [WidgetDef] = [
     WidgetDef(id: "cpu",     name: "CPU")  { AnyView(Ticking(every: 2)  { Label("\(Int(Metrics.cpu.usage() * 100))%", systemImage: "cpu") }) },
     WidgetDef(id: "memory",  name: "内存") { AnyView(Ticking(every: 5)  { Label("\(Int(Metrics.memoryUsage() * 100))%", systemImage: "memorychip") }) },
     WidgetDef(id: "battery", name: "电量") { AnyView(Ticking(every: 30) { Label(Metrics.batteryLevel().map { "\($0)%" } ?? "—", systemImage: "battery.75") }) },
+    WidgetDef(id: "todo",    name: "待办") { AnyView(TodoWidget()) },
 ]
 
 // MARK: - 字号随 Dock 高度自动调整
@@ -24,23 +25,29 @@ extension EnvironmentValues {
     }
 }
 
-// MARK: - 通用外观：定时刷新的毛玻璃胶囊（尺寸跟随字号）
+// MARK: - 通用胶囊外观（尺寸跟随字号）
+struct PillStyle: ViewModifier {
+    @Environment(\.widgetFontSize) private var size
+    func body(content: Content) -> some View {
+        content
+            .font(.system(size: size, weight: .medium, design: .rounded))
+            .monospacedDigit()
+            .lineLimit(1)
+            .fixedSize()                       // 文字永不截断
+            .foregroundStyle(.white)
+            .padding(.horizontal, size * 0.8)
+            .padding(.vertical, size * 0.45)
+            .background(.ultraThinMaterial, in: Capsule())
+    }
+}
+
+// MARK: - 定时刷新的胶囊
 struct Ticking<Content: View>: View {
     let every: TimeInterval
     @ViewBuilder var content: () -> Content
-    @Environment(\.widgetFontSize) private var size
-
     var body: some View {
         TimelineView(.periodic(from: .now, by: every)) { _ in
-            content()
-                .font(.system(size: size, weight: .medium, design: .rounded))
-                .monospacedDigit()
-                .lineLimit(1)
-                .fixedSize()                       // 文字永不截断
-                .foregroundStyle(.white)
-                .padding(.horizontal, size * 0.8)
-                .padding(.vertical, size * 0.45)
-                .background(.ultraThinMaterial, in: Capsule())
+            content().modifier(PillStyle())
         }
     }
 }
