@@ -108,6 +108,8 @@ struct SideView: View {
     @ObservedObject private var dock = DockState.shared
     @AppStorage(Pref.style) private var style = "merged"
     @AppStorage(Pref.fontScale) private var fontScale = 1.0
+    @AppStorage(Pref.glassTint) private var glassTint = 0.3
+    @Environment(\.colorScheme) private var scheme
     @State private var contentSize: CGSize = .zero
     @State private var available: CGFloat = 0
     /// 实在放不下时只显示前几个（缩放低于 minScale 就去掉最后一个）
@@ -205,8 +207,12 @@ struct SideView: View {
         }
         .frame(width: vertical ? cross : nil, height: vertical ? nil : cross)
         .background(
-            VisualEffect(material: .popover)
-                .clipShape(MergedShape(dockEdge: edge, radius: r), style: FillStyle(eoFill: true))
+            ZStack {
+                VisualEffect(material: .popover)
+                // 系统材质比 Dock 浅，压暗一点对上 Dock 的颜色（深色模式少压一些）
+                Color.black.opacity(glassTint * (scheme == .dark ? 0.4 : 1))
+            }
+            .clipShape(MergedShape(dockEdge: edge, radius: r, cover: 3), style: FillStyle(eoFill: true))
         )
     }
 
@@ -256,6 +262,8 @@ struct SideView: View {
 struct MergedShape: Shape {
     let dockEdge: Edge
     let radius: CGFloat
+    /// 往 Dock 里多盖几点，把 Dock 端头自己的边线和圆角盖掉（图标离边缘约 4.6pt，不会被盖到）
+    var cover: CGFloat = 0
 
     func path(in rect: CGRect) -> Path {
         let r = radius
@@ -279,11 +287,12 @@ struct MergedShape: Shape {
         // Dock 本体（只有伸进本面板的 r 那一段有意义）
         let big: CGFloat = 4000
         let dockRect: CGRect
+        let c = cover
         switch dockEdge {
-        case .leading:  dockRect = CGRect(x: rect.minX - big, y: rect.minY, width: big + r, height: rect.height)
-        case .trailing: dockRect = CGRect(x: rect.maxX - r, y: rect.minY, width: big + r, height: rect.height)
-        case .top:      dockRect = CGRect(x: rect.minX, y: rect.minY - big, width: rect.width, height: big + r)
-        case .bottom:   dockRect = CGRect(x: rect.minX, y: rect.maxY - r, width: rect.width, height: big + r)
+        case .leading:  dockRect = CGRect(x: rect.minX - big, y: rect.minY, width: big + r - c, height: rect.height)
+        case .trailing: dockRect = CGRect(x: rect.maxX - r + c, y: rect.minY, width: big + r, height: rect.height)
+        case .top:      dockRect = CGRect(x: rect.minX, y: rect.minY - big, width: rect.width, height: big + r - c)
+        case .bottom:   dockRect = CGRect(x: rect.minX, y: rect.maxY - r + c, width: rect.width, height: big + r)
         }
         if r > 0 { p.addRoundedRect(in: dockRect, cornerSize: CGSize(width: r, height: r), style: .continuous) }
         return p
