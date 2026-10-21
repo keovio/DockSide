@@ -21,6 +21,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         Pref.register()
         TodoStore.shared.autoClear()
         HotkeyManager.shared.start()
+        // 提前建好日程数据（不要等视图第一次渲染时才初始化，否则会在视图更新中途改状态）
+        _ = ScheduleStore.shared
 
         // 请求辅助功能权限（用于读取 Dock 位置）
         let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
@@ -143,6 +145,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
               let bg = stable,
               let screen = NSScreen.screens.first(where: { $0.frame.intersects(bg) }) else {
             panels.values.forEach { $0.orderOut(nil) }
+            LayoutCapacity.shared.avail = [:]
             TodoPopover.shared.hide()
             return
         }
@@ -166,21 +169,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let w = bg.width + CGFloat(d.double(forKey: Pref.alignTop) - d.double(forKey: Pref.alignBottom))
             // Dock 在左右两侧：左组放上方，右组放下方
             let aboveY = bg.maxY + gap - overlap
-            place(panels[.left]!,  CGRect(x: x, y: aboveY, width: w, height: vf.maxY - 8 - aboveY))
+            place(.left,  CGRect(x: x, y: aboveY, width: w, height: vf.maxY - 8 - aboveY), vertical: true, merged: merged, r: r)
             let belowTop = bg.minY - gap + overlap
-            place(panels[.right]!, CGRect(x: x, y: s.minY + 8, width: w, height: belowTop - s.minY - 8))
+            place(.right, CGRect(x: x, y: s.minY + 8, width: w, height: belowTop - s.minY - 8), vertical: true, merged: merged, r: r)
         } else {
             let y = bg.minY + CGFloat(d.double(forKey: Pref.alignBottom))
             let h = bg.height + CGFloat(d.double(forKey: Pref.alignTop) - d.double(forKey: Pref.alignBottom))
             let leftEnd = bg.minX - gap + overlap
-            place(panels[.left]!,  CGRect(x: s.minX + 8, y: y, width: leftEnd - s.minX - 8, height: h))
+            place(.left,  CGRect(x: s.minX + 8, y: y, width: leftEnd - s.minX - 8, height: h), vertical: false, merged: merged, r: r)
             let rightStart = bg.maxX + gap - overlap
-            place(panels[.right]!, CGRect(x: rightStart, y: y, width: s.maxX - 8 - rightStart, height: h))
+            place(.right, CGRect(x: rightStart, y: y, width: s.maxX - 8 - rightStart, height: h), vertical: false, merged: merged, r: r)
         }
     }
 
-    private func place(_ p: NSPanel, _ r: CGRect) {
-        guard min(r.width, r.height) > 30, max(r.width, r.height) > 80 else { p.orderOut(nil); return }
+    private func place(_ side: Side, _ r: CGRect, vertical: Bool, merged: Bool, r radius: CGFloat) {
+        let p = panels[side]!
+        // 布局编辑器判断放不放得下用的可用长度，和 SideView 里的算法一致
+        let len = vertical ? r.height : r.width, cross = vertical ? r.width : r.height
+        LayoutCapacity.shared.avail[side] = len - (merged ? radius + cross * 0.45 : 0)
+        guard min(r.width, r.height) > 30, max(r.width, r.height) > 80 else {
+            LayoutCapacity.shared.avail[side] = nil
+            p.orderOut(nil); return
+        }
         if p.frame != r { p.setFrame(r, display: true) }
         p.orderFrontRegardless()
     }
