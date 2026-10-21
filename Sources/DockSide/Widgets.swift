@@ -10,7 +10,6 @@ struct WidgetDef {
 
 let allWidgets: [WidgetDef] = [
     WidgetDef(id: "clock",    name: "时钟",   symbol: "clock")       { AnyView(ClockWidget()) },
-    WidgetDef(id: "date",     name: "日期",   symbol: "calendar")    { AnyView(DateWidget()) },
     WidgetDef(id: "cpu",      name: "CPU",    symbol: "cpu")         { AnyView(CPUWidget()) },
     WidgetDef(id: "memory",   name: "内存",   symbol: "memorychip")  { AnyView(MemoryWidget()) },
     WidgetDef(id: "battery",  name: "电量",   symbol: "battery.75")  { AnyView(BatteryWidget()) },
@@ -44,11 +43,14 @@ final class LayoutCapacity {
     /// 这组组件需要的长度；有组件没量到就返回 nil
     func need(_ ids: [String], side: Side) -> CGFloat? {
         guard let sz = sizes[side] else { return nil }
-        var len: CGFloat = 0
+        var len: CGFloat = 0, measured = 0
         for id in ids {
-            guard let s = sz[id], s.width.isFinite, s.height.isFinite else { return nil }
+            // 没量到的先按 0 算，不要让一个没量到的组件把整个检查变成「全放行」
+            guard let s = sz[id], s.width.isFinite, s.height.isFinite else { continue }
             len += vertical ? s.height : s.width
+            measured += 1
         }
+        if measured == 0 { return nil }
         return len + CGFloat(max(0, ids.count - 1)) * (gapLen[side] ?? 1) + (extra[side] ?? 0)
     }
 }
@@ -228,7 +230,7 @@ struct SideView: View {
 
     private func publishCapacity(avail: CGFloat, size: CGFloat, vertical: Bool) {
         let c = LayoutCapacity.shared
-        c.avail[side] = avail
+        // avail 由 AppDelegate 按面板真实尺寸写入（不依赖视图刷新时机）
         c.gapLen[side] = style == "separate" ? size * (vertical ? 0.4 : 0.5) : 1
         c.extra[side] = style == "unified" ? size * 0.8 : 0
         c.vertical = vertical
