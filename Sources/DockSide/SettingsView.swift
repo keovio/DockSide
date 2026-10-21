@@ -4,13 +4,14 @@ import ServiceManagement
 import ApplicationServices
 
 enum SettingsPage: String, Hashable, CaseIterable {
-    case general, layout, appearance, clock, system, todo, pomodoro, about
+    case general, layout, appearance, shortcuts, clock, system, todo, pomodoro, about
 
     var title: String {
         switch self {
         case .general: return "通用"
         case .layout: return "布局"
         case .appearance: return "外观"
+        case .shortcuts: return "快捷键"
         case .clock: return "时钟与日期"
         case .system: return "系统监控"
         case .todo: return "待办"
@@ -24,6 +25,7 @@ enum SettingsPage: String, Hashable, CaseIterable {
         case .general: return "gearshape"
         case .layout: return "square.grid.3x1.below.line.grid.1x2"
         case .appearance: return "paintbrush"
+        case .shortcuts: return "command"
         case .clock: return "clock"
         case .system: return "cpu"
         case .todo: return "checklist"
@@ -46,7 +48,7 @@ struct SettingsView: View {
         NavigationSplitView {
             List(selection: $nav.page) {
                 Section {
-                    ForEach([SettingsPage.general, .layout, .appearance], id: \.self) { item($0) }
+                    ForEach([SettingsPage.general, .layout, .appearance, .shortcuts], id: \.self) { item($0) }
                 }
                 Section("组件") {
                     ForEach([SettingsPage.clock, .system, .todo, .pomodoro], id: \.self) { item($0) }
@@ -73,6 +75,7 @@ struct SettingsView: View {
         case .general: GeneralPane()
         case .layout: ScrollView { LayoutEditorView().padding(24) }
         case .appearance: AppearancePane()
+        case .shortcuts: ShortcutsPane()
         case .clock: ClockPane()
         case .system: SystemPane()
         case .todo: TodoPane()
@@ -116,7 +119,7 @@ struct GeneralPane: View {
 }
 
 struct AppearancePane: View {
-    @AppStorage(Pref.style) private var style = "unified"
+    @AppStorage(Pref.style) private var style = "merged"
     @AppStorage(Pref.fontScale) private var fontScale = 1.0
     @AppStorage(Pref.alignTop) private var alignTop = 0.0
     @AppStorage(Pref.alignBottom) private var alignBottom = 0.0
@@ -126,7 +129,8 @@ struct AppearancePane: View {
         Form {
             Section {
                 Picker("组件样式", selection: $style) {
-                    Text("合成一条（推荐）").tag("unified")
+                    Text("融进 Dock（推荐）").tag("merged")
+                    Text("独立玻璃条").tag("unified")
                     Text("分开的胶囊").tag("separate")
                 }
                 .pickerStyle(.radioGroup)
@@ -147,7 +151,7 @@ struct AppearancePane: View {
                     Slider(value: $dockGap, in: 0...20, step: 1)
                     Text("\(Int(dockGap))").monospacedDigit().frame(width: 44)
                 }
-                Text("默认会自动对齐 Dock 的玻璃底；如果在你的 Mac 上差一点，拖动这里微调，正数往上。").font(.caption).foregroundStyle(.secondary)
+                Text("位置按 Dock 图标的实际范围自动对齐；如果差一点，拖动这里微调，正数往上。间距只对独立样式有效。").font(.caption).foregroundStyle(.secondary)
                 Button("恢复默认") { alignTop = 0; alignBottom = 0; dockGap = 4 }
             }
             Section("字号") {
