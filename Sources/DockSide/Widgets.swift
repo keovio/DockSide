@@ -49,6 +49,7 @@ final class LayoutCapacity {
 private struct WidgetFontSizeKey: EnvironmentKey { static let defaultValue: CGFloat = 16 }
 private struct CompactKey: EnvironmentKey { static let defaultValue = false }
 private struct InkKey: EnvironmentKey { static let defaultValue = Color.white }
+private struct MeasuringKey: EnvironmentKey { static let defaultValue = false }
 extension EnvironmentValues {
     var widgetFontSize: CGFloat {
         get { self[WidgetFontSizeKey.self] }
@@ -58,6 +59,11 @@ extension EnvironmentValues {
     var widgetInk: Color {
         get { self[InkKey.self] }
         set { self[InkKey.self] = newValue }
+    }
+    /// 看不见的测量层里为 true：组件不要响应悬停、不要启动轮询
+    var measuring: Bool {
+        get { self[MeasuringKey.self] }
+        set { self[MeasuringKey.self] = newValue }
     }
     /// Dock 在左右两侧时为 true，组件显示竖排紧凑版
     var compact: Bool {
@@ -181,6 +187,7 @@ struct SideView: View {
                 measureLayer(all: allWidgets.map(\.id), vertical: vertical, size: fontSize, cross: cross, merged: merged)
                     .fixedSize()
                     .hidden()
+                    .allowsHitTesting(false)
                     .frame(width: 0, height: 0)
 
                 if let p {
@@ -252,6 +259,7 @@ struct SideView: View {
         .environment(\.widgetFontSize, size)
         .environment(\.compact, vertical)
         .environment(\.widgetInk, merged ? Color.primary : Color.white)
+        .environment(\.measuring, true)
     }
 
     /// Dock 朝向本面板的哪条边
