@@ -223,6 +223,7 @@ struct TodoWidget: View {
     @Environment(\.compact) private var compact
     @AppStorage(Pref.todoTitleChars) private var titleChars = 6
     @AppStorage(Pref.todoHover) private var hoverExpand = true
+    @Environment(\.measuring) private var measuring
 
     var body: some View {
         let pending = store.pending
@@ -268,7 +269,7 @@ struct TodoWidget: View {
         .contentShape(Rectangle())
         .onTapGesture { TodoPopover.shared.toggle() }
         .onHover { inside in
-            guard hoverExpand else { return }
+            guard hoverExpand, !measuring else { return }
             if inside { TodoPopover.shared.show() } else { TodoPopover.shared.scheduleHide() }
         }
     }
