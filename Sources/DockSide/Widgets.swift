@@ -96,13 +96,18 @@ struct SideView: View {
     @AppStorage(Pref.style) private var style = "unified"
     @AppStorage(Pref.fontScale) private var fontScale = 1.0
     @State private var contentSize: CGSize = .zero
+    @State private var available: CGSize = .zero
+    /// 实在放不下时只显示前几个（缩放低于 minScale 就去掉最后一个）
+    @State private var limit = Int.max
+    private let minScale: CGFloat = 0.7
 
     var body: some View {
         GeometryReader { geo in
             let vertical = dock.vertical
             let base = vertical ? geo.size.width * 0.2 : geo.size.height * 0.26
             let fontSize = max(9, base * fontScale)
-            let ids = (store.selected[side] ?? []).filter { widgetDef($0) != nil }
+            let all = (store.selected[side] ?? []).filter { widgetDef($0) != nil }
+            let ids = Array(all.prefix(limit))
             let scale: CGFloat = vertical
                 ? (contentSize.height > 0 ? min(1, geo.size.height / contentSize.height) : 1)
                 : (contentSize.width > 0 ? min(1, geo.size.width / contentSize.width) : 1)
@@ -118,8 +123,17 @@ struct SideView: View {
                 })
                 .scaleEffect(scale, anchor: anchor)
                 .frame(width: geo.size.width, height: geo.size.height, alignment: nearDock)
+                .onAppear { available = geo.size }
+                .onChange(of: geo.size) { available = $0; limit = Int.max }
+                .onChange(of: all) { _ in limit = Int.max }
+                .onChange(of: dock.vertical) { _ in limit = Int.max }
         }
-        .onPreferenceChange(ContentSizeKey.self) { contentSize = $0 }
+        .onPreferenceChange(ContentSizeKey.self) { size in
+            contentSize = size
+            let need = dock.vertical ? size.height / max(available.height, 1) : size.width / max(available.width, 1)
+            let shown = min(limit, (store.selected[side] ?? []).count)
+            if need > 0, 1 / need < minScale, shown > 1 { limit = shown - 1 }
+        }
     }
 
     @ViewBuilder
