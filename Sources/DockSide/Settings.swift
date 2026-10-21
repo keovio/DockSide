@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 
 /// 所有偏好设置的键和默认值
 enum Pref {
@@ -20,7 +21,7 @@ enum Pref {
 
     static func register() {
         UserDefaults.standard.register(defaults: [
-            style: "unified", fontScale: 1.0,
+            style: "merged", fontScale: 1.0,
             clockSeconds: true, clock24h: true,
             todoMaxChars: 20, todoHover: true, todoSound: true, todoAutoClear: true,
             pomoFocus: 25, pomoBreak: 5, pomoSound: true, pomoAutoNext: true,
@@ -34,4 +35,5 @@ final class DockState: ObservableObject {
     static let shared = DockState()
     @Published var vertical = false     // Dock 在屏幕左右两侧
     @Published var dockOnLeft = false
+    @Published var radius: CGFloat = 12   // Dock 玻璃底的圆角
 }
