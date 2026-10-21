@@ -235,20 +235,20 @@ struct TodoWidget: View {
                 }
             } else {
                 HStack(spacing: size * 0.55) {
-                    ProgressRing(progress: progress, size: size * 1.75, lineWidth: size * 0.15) {
-                        Text("\(done)/\(total)").font(.system(size: size * 0.42, weight: .bold, design: .rounded))
+                    ProgressRing(progress: progress, size: size * 1.95, lineWidth: size * 0.14) {
+                        Text("\(done)/\(total)").font(.system(size: size * 0.52, weight: .bold, design: .rounded)).minimumScaleFactor(0.7)
                     }
                     VStack(alignment: .leading, spacing: size * 0.08) {
                         if let first = pending.first {
                             Marquee(text: first.title, maxChars: maxChars)
                                 .font(.system(size: size * 0.95, weight: .semibold, design: .rounded))
                             Text(pending.count > 1 ? "下一条 · \(short(pending[1].title, maxChars))" : "最后一条了")
-                                .font(.system(size: size * 0.6))
+                                .font(.system(size: size * 0.74))
                                 .opacity(0.7)
                         } else {
                             Text("全部完成").font(.system(size: size * 0.95, weight: .semibold, design: .rounded))
                             Text(total == 0 ? "点这里添加待办" : "辛苦了")
-                                .font(.system(size: size * 0.6))
+                                .font(.system(size: size * 0.74))
                                 .opacity(0.7)
                         }
                     }
