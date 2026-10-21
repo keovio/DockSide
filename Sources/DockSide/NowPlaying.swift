@@ -9,6 +9,17 @@ final class NowPlaying: ObservableObject {
     @Published var artist = ""
     @Published var artwork: NSImage?
     @Published var playing = false
+    @Published var duration: Double = 0
+    // 播放进度：elapsed 是 elapsedAt 那一刻的位置，之后按 rate 往前推
+    private(set) var elapsed: Double = 0
+    private(set) var elapsedAt = Date()
+    private(set) var rate: Double = 0
+
+    /// 现在播到第几秒
+    func position(at now: Date = Date()) -> Double {
+        guard playing else { return elapsed }
+        return elapsed + now.timeIntervalSince(elapsedAt) * max(rate, 1)
+    }
 
     var hasTrack: Bool { !title.isEmpty }
 
@@ -19,8 +30,11 @@ final class NowPlaying: ObservableObject {
     private var getInfo: GetInfoFn?
     private var getPlaying: GetPlayingFn?
     private var send: SendFn?
+    private typealias SeekFn = @convention(c) (Double) -> Void
+    private var seekFn: SeekFn?
     private var timer: Timer?
     private var lastArtworkKey = ""
+    private var lyricsKey = ""
 
     private init() {
         let path = "/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote"
@@ -28,6 +42,7 @@ final class NowPlaying: ObservableObject {
         if let p = dlsym(h, "MRMediaRemoteGetNowPlayingInfo") { getInfo = unsafeBitCast(p, to: GetInfoFn.self) }
         if let p = dlsym(h, "MRMediaRemoteGetNowPlayingApplicationIsPlaying") { getPlaying = unsafeBitCast(p, to: GetPlayingFn.self) }
         if let p = dlsym(h, "MRMediaRemoteSendCommand") { send = unsafeBitCast(p, to: SendFn.self) }
+        if let p = dlsym(h, "MRMediaRemoteSetElapsedTime") { seekFn = unsafeBitCast(p, to: SeekFn.self) }
     }
 
     /// 有组件显示时才轮询
@@ -57,8 +72,18 @@ final class NowPlaying: ObservableObject {
                     self.lastArtworkKey = key
                 }
             }
-            if let rate = d["kMRMediaRemoteNowPlayingInfoPlaybackRate"] as? Double, self.getPlaying == nil {
-                self.playing = rate > 0
+            let rate = d["kMRMediaRemoteNowPlayingInfoPlaybackRate"] as? Double ?? 0
+            if self.getPlaying == nil { self.playing = rate > 0 }
+            self.rate = rate
+            if let e = d["kMRMediaRemoteNowPlayingInfoElapsedTime"] as? Double {
+                self.elapsed = e
+                self.elapsedAt = d["kMRMediaRemoteNowPlayingInfoTimestamp"] as? Date ?? Date()
+            }
+            let dur = d["kMRMediaRemoteNowPlayingInfoDuration"] as? Double ?? 0
+            if dur != self.duration { self.duration = dur }
+            if key != self.lyricsKey {
+                self.lyricsKey = key
+                Lyrics.shared.load(title: t, artist: a, duration: dur)
             }
         }
         getPlaying?(DispatchQueue.main) { [weak self] p in
@@ -70,6 +95,11 @@ final class NowPlaying: ObservableObject {
     func toggle()   { command(2); playing.toggle() }
     func next()     { command(4) }
     func previous() { command(5) }
+    func seek(to t: Double) {
+        seekFn?(t)
+        elapsed = t; elapsedAt = Date()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in self?.refresh() }
+    }
 
     private func command(_ c: UInt32) {
         _ = send?(c, nil)
@@ -126,6 +156,9 @@ struct NowPlayingWidget: View {
             Button("下一首") { np.next() }
         }
         .onAppear { np.start() }
+        .onHover { inside in
+            if inside { LyricsPopover.shared.show() } else { LyricsPopover.shared.scheduleHide() }
+        }
     }
 
     @ViewBuilder
