@@ -77,8 +77,7 @@ struct CountdownWidget: View {
                     } else {
                         HStack(alignment: .center, spacing: size * 0.45) {
                             VStack(alignment: .leading, spacing: size * 0.05) {
-                                Marquee(text: item.name, width: size * 0.8 * CGFloat(nameChars))
-                                    .font(.system(size: size * 0.8, weight: .medium))
+                                Marquee(text: item.name, width: size * 0.8 * CGFloat(nameChars), fontSize: size * 0.8, semibold: false)
                                     .opacity(0.8)
                                 Text(d == 0 ? "就是今天" : (d > 0 ? "还有" : "已经"))
                                     .font(.system(size: size * 0.66)).opacity(0.6)
