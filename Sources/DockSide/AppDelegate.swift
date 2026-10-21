@@ -1,17 +1,20 @@
 import AppKit
 import SwiftUI
-import ServiceManagement
 import ApplicationServices
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
-    let store = WidgetStore()
+    let store = WidgetStore.shared
     lazy var panels: [Side: NSPanel] = [
         .left:  makeSidePanel(SideView(store: store, side: .left)),
         .right: makeSidePanel(SideView(store: store, side: .right)),
     ]
     private var statusItem: NSStatusItem!
+    private var hidden = false
 
     func applicationDidFinishLaunching(_ n: Notification) {
+        Pref.register()
+        TodoStore.shared.autoClear()
+
         // 请求辅助功能权限（用于读取 Dock 位置）
         let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(opts)
@@ -26,86 +29,96 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         layout()
     }
 
-    // MARK: 菜单栏：每次打开时重建，勾选状态保持最新
+    // MARK: - 菜单栏菜单：只放常用操作，长度固定；设置都在设置窗口里
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        for side in Side.allCases {
-            let sub = NSMenu()
-            for w in allWidgets {
-                let item = NSMenuItem(title: w.name, action: #selector(toggleWidget(_:)), keyEquivalent: "")
-                item.target = self
-                item.representedObject = [side.rawValue, w.id]
-                item.state = (store.selected[side] ?? []).contains(w.id) ? .on : .off
-                sub.addItem(item)
-            }
-            let parent = NSMenuItem(title: side.title, action: nil, keyEquivalent: "")
-            parent.submenu = sub
-            menu.addItem(parent)
+        let active = store.active
+
+        // 组件快捷操作：每个启用的组件最多挂两个动作
+        var quick: [NSMenuItem] = []
+        if active.contains("todo") {
+            quick.append(item("新建待办…", #selector(newTodo), "n"))
+            quick.append(item("从剪贴板导入待办", #selector(importClipboard)))
         }
-        menu.addItem(.separator())
-        let todo = NSMenuItem(title: "待办清单…", action: #selector(openTodos), keyEquivalent: "t")
-        todo.target = self
-        menu.addItem(todo)
-        let imp = NSMenuItem(title: "导入待办…", action: #selector(importTodos), keyEquivalent: "")
-        imp.target = self
-        menu.addItem(imp)
+        if active.contains("pomodoro") {
+            let p = Pomodoro.shared
+            let title = p.running ? "暂停番茄钟" : (p.phase == .idle ? "开始番茄钟" : "继续番茄钟")
+            quick.append(item(title, #selector(togglePomodoro), "p"))
+        }
+        if !quick.isEmpty {
+            let header = NSMenuItem(title: "组件快捷操作", action: nil, keyEquivalent: "")
+            header.isEnabled = false
+            menu.addItem(header)
+            for q in quick { menu.addItem(q) }
+            menu.addItem(.separator())
+        }
+
+        menu.addItem(item("编辑布局…", #selector(openLayout), "l"))
+        menu.addItem(item(hidden ? "显示组件" : "临时隐藏组件", #selector(toggleHidden), "h"))
         menu.addItem(.separator())
 
         if !AXIsProcessTrusted() {
-            let ax = NSMenuItem(title: "⚠️ 需要辅助功能权限…", action: #selector(openAccessibility), keyEquivalent: "")
-            ax.target = self
-            menu.addItem(ax)
+            menu.addItem(item("⚠️ 需要辅助功能权限…", #selector(openAX)))
         }
-        let login = NSMenuItem(title: "开机自动启动", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
-        login.target = self
-        login.state = SMAppService.mainApp.status == .enabled ? .on : .off
-        menu.addItem(login)
-
+        menu.addItem(item("设置…", #selector(openSettings), ","))
+        menu.addItem(item("检查更新…", #selector(checkUpdates)))
+        menu.addItem(item("使用帮助", #selector(openHelp)))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "退出 DockSide", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
     }
 
-    @objc private func toggleWidget(_ sender: NSMenuItem) {
-        guard let pair = sender.representedObject as? [String],
-              let side = Side(rawValue: pair[0]) else { return }
-        store.toggle(pair[1], on: side)
+    private func item(_ title: String, _ action: Selector, _ key: String = "") -> NSMenuItem {
+        let i = NSMenuItem(title: title, action: action, keyEquivalent: key)
+        i.target = self
+        return i
     }
 
-    @objc private func toggleLaunchAtLogin() {
-        do {
-            if SMAppService.mainApp.status == .enabled {
-                try SMAppService.mainApp.unregister()
-            } else {
-                try SMAppService.mainApp.register()
-            }
-        } catch {
-            NSAlert(error: error).runModal()
-        }
+    @objc private func newTodo() { TodoIO.askNew() }
+    @objc private func importClipboard() { TodoIO.importFromClipboard() }
+    @objc private func togglePomodoro() { Pomodoro.shared.toggle() }
+    @objc private func openLayout() { SettingsWindow.show(.layout) }
+    @objc private func openSettings() { SettingsWindow.show(.general) }
+    @objc private func openAX() { openAccessibilitySettings() }
+    @objc private func toggleHidden() { hidden.toggle(); layout() }
+    @objc private func checkUpdates() {
+        NSWorkspace.shared.open(URL(string: "https://github.com/keovio/DockSide/releases/latest")!)
+    }
+    @objc private func openHelp() {
+        NSWorkspace.shared.open(URL(string: "https://github.com/keovio/DockSide#readme")!)
     }
 
-    @objc private func openTodos() { TodoWindow.show() }
-    @objc private func importTodos() { TodoIO.importFromFile() }
-
-    @objc private func openAccessibility() {
-        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
-    }
-
-    // MARK: 布局：跟随 Dock 位置
+    // MARK: - 布局：跟随 Dock 位置和方向
     func layout() {
-        guard let dock = DockLocator.iconsFrame(), dock.width > dock.height,
+        guard !hidden,
+              let dock = DockLocator.iconsFrame(),
               let screen = NSScreen.screens.first(where: { $0.frame.intersects(dock) }) else {
             panels.values.forEach { $0.orderOut(nil) }
+            TodoPopover.shared.hide()
             return
         }
-        let gap: CGFloat = 10, s = screen.frame
-        place(panels[.left]!,  CGRect(x: s.minX + gap, y: dock.minY,
-                                      width: dock.minX - s.minX - gap * 2, height: dock.height))
-        place(panels[.right]!, CGRect(x: dock.maxX + gap, y: dock.minY,
-                                      width: s.maxX - dock.maxX - gap * 2, height: dock.height))
+        let s = screen.frame, vf = screen.visibleFrame, gap: CGFloat = 10
+        let vertical = dock.height > dock.width
+        let state = DockState.shared
+        if state.vertical != vertical { state.vertical = vertical }
+        let onLeft = dock.midX < s.midX
+        if state.dockOnLeft != onLeft { state.dockOnLeft = onLeft }
+
+        if vertical {
+            // Dock 在左右两侧：左组放上方，右组放下方
+            place(panels[.left]!,  CGRect(x: dock.minX, y: dock.maxY + gap,
+                                          width: dock.width, height: vf.maxY - dock.maxY - gap * 2))
+            place(panels[.right]!, CGRect(x: dock.minX, y: s.minY + gap,
+                                          width: dock.width, height: dock.minY - s.minY - gap * 2))
+        } else {
+            place(panels[.left]!,  CGRect(x: s.minX + gap, y: dock.minY,
+                                          width: dock.minX - s.minX - gap * 2, height: dock.height))
+            place(panels[.right]!, CGRect(x: dock.maxX + gap, y: dock.minY,
+                                          width: s.maxX - dock.maxX - gap * 2, height: dock.height))
+        }
     }
 
     private func place(_ p: NSPanel, _ r: CGRect) {
-        guard r.width > 80 else { p.orderOut(nil); return }
+        guard min(r.width, r.height) > 30, max(r.width, r.height) > 80 else { p.orderOut(nil); return }
         if p.frame != r { p.setFrame(r, display: true) }
         p.orderFrontRegardless()
     }
