@@ -124,6 +124,7 @@ struct AppearancePane: View {
     @AppStorage(Pref.alignTop) private var alignTop = 0.0
     @AppStorage(Pref.alignBottom) private var alignBottom = 0.0
     @AppStorage(Pref.dockGap) private var dockGap = 4.0
+    @AppStorage(Pref.glassTint) private var glassTint = 0.3
 
     var body: some View {
         Form {
@@ -151,8 +152,13 @@ struct AppearancePane: View {
                     Slider(value: $dockGap, in: 0...20, step: 1)
                     Text("\(Int(dockGap))").monospacedDigit().frame(width: 44)
                 }
-                Text("位置按 Dock 图标的实际范围自动对齐；如果差一点，拖动这里微调，正数往上。间距只对独立样式有效。").font(.caption).foregroundStyle(.secondary)
-                Button("恢复默认") { alignTop = 0; alignBottom = 0; dockGap = 4 }
+                HStack {
+                    Text("玻璃深浅")
+                    Slider(value: $glassTint, in: 0...0.6, step: 0.02)
+                    Text(String(format: "%.0f%%", glassTint * 100)).monospacedDigit().frame(width: 44)
+                }
+                Text("位置按 Dock 图标的实际范围自动对齐；如果差一点，拖动这里微调，正数往上。间距只对独立样式有效；玻璃深浅用来对上 Dock 的颜色（融进 Dock 样式）。").font(.caption).foregroundStyle(.secondary)
+                Button("恢复默认") { alignTop = 0; alignBottom = 0; dockGap = 4; glassTint = 0.3 }
             }
             Section("字号") {
                 HStack {
