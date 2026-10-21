@@ -10,6 +10,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     ]
     private var statusItem: NSStatusItem!
     private var hidden = false
+    // 防抖：切换桌面/全屏动画时 Dock 的 AX 位置会短暂跳变，连续读到同一个值才采用
+    private var appliedBg: CGRect?
+    private var candidateBg: CGRect?
+    private var candidateCount = 0
+    private var missCount = 0
+    private var freezeUntil = Date.distantPast
 
     func applicationDidFinishLaunching(_ n: Notification) {
         Pref.register()
@@ -26,8 +32,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.delegate = self
         statusItem.menu = menu
 
-        Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.layout() }
-        layout()
+        Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.layout() }
+        // 切换桌面后 1.5 秒内不跟随 Dock 的位置变化（动画中的读数不可靠）
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification,
+                                                          object: nil, queue: .main) { [weak self] _ in
+            self?.freezeUntil = Date().addingTimeInterval(1.5)
+        }
+        layout(force: true)
     }
 
     // MARK: - 菜单栏菜单：只放常用操作，长度固定；设置都在设置窗口里
@@ -81,7 +92,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func openLayout() { SettingsWindow.show(.layout) }
     @objc private func openSettings() { SettingsWindow.show(.general) }
     @objc private func openAX() { openAccessibilitySettings() }
-    @objc func toggleHidden() { hidden.toggle(); layout() }
+    @objc func toggleHidden() { hidden.toggle(); layout(force: true) }
     @objc private func checkUpdates() {
         NSWorkspace.shared.open(URL(string: "https://github.com/keovio/DockSide/releases/latest")!)
     }
@@ -91,9 +102,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     // MARK: - 布局：跟随 Dock 位置和方向
-    func layout() {
+    /// 读 Dock 位置并防抖：新位置要连续读到 2 次（约 1 秒）才采用，读不到要连续 3 次才隐藏
+    private func stableDockFrame(force: Bool) -> CGRect? {
+        let raw = DockLocator.backgroundFrame()
+        if force { appliedBg = raw; candidateBg = nil; candidateCount = 0; missCount = 0; return raw }
+        guard let bg = raw else {
+            missCount += 1
+            if missCount >= 3 { appliedBg = nil }
+            return appliedBg
+        }
+        missCount = 0
+        func same(_ a: CGRect?, _ b: CGRect) -> Bool {
+            guard let a else { return false }
+            return abs(a.minX - b.minX) < 0.6 && abs(a.minY - b.minY) < 0.6 && abs(a.width - b.width) < 0.6 && abs(a.height - b.height) < 0.6
+        }
+        if same(appliedBg, bg) { candidateBg = nil; candidateCount = 0; return appliedBg }
+        if appliedBg == nil { appliedBg = bg; return bg }
+        if Date() < freezeUntil { return appliedBg }
+        if same(candidateBg, bg) { candidateCount += 1 } else { candidateBg = bg; candidateCount = 1 }
+        if candidateCount >= 2 { appliedBg = bg; candidateBg = nil; candidateCount = 0 }
+        return appliedBg
+    }
+
+    func layout(force: Bool = false) {
+        let stable = stableDockFrame(force: force)
         guard !hidden,
-              let bg = DockLocator.backgroundFrame(),
+              let bg = stable,
               let screen = NSScreen.screens.first(where: { $0.frame.intersects(bg) }) else {
             panels.values.forEach { $0.orderOut(nil) }
             TodoPopover.shared.hide()
