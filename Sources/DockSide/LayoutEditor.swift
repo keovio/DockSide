@@ -57,12 +57,18 @@ struct WidgetChip: View {
 struct LayoutEditorView: View {
     @ObservedObject private var store = WidgetStore.shared
     @ObservedObject private var dock = DockState.shared
+    @State private var warning: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
-            Text("拖动标签调整顺序，可以拖到另一侧；从组件库拖进来添加，拖回组件库移除。也可以右键操作。空间实在不够时，排在后面的组件会自动隐藏。")
+            Text("拖动标签调整顺序，可以拖到另一侧；从组件库拖进来添加，拖回组件库移除。也可以右键操作。某一侧放不下时拖不进去。")
                 .font(.callout)
                 .foregroundStyle(.secondary)
+            if let warning {
+                Label(warning, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                    .transition(.opacity)
+            }
 
             HStack(alignment: .top, spacing: 14) {
                 zone(.left)
@@ -83,10 +89,10 @@ struct LayoutEditorView: View {
                         WidgetChip(id: def.id)
                             .contextMenu {
                                 Button(title(.left).components(separatedBy: "（").first.map { "添加到\($0)" } ?? "添加到左侧") {
-                                    store.insert(def.id, into: .left, before: nil)
+                                    tryInsert(def.id, into: .left, before: nil)
                                 }
                                 Button(title(.right).components(separatedBy: "（").first.map { "添加到\($0)" } ?? "添加到右侧") {
-                                    store.insert(def.id, into: .right, before: nil)
+                                    tryInsert(def.id, into: .right, before: nil)
                                 }
                             }
                     }
@@ -108,6 +114,21 @@ struct LayoutEditorView: View {
         }
     }
 
+    /// 放得下才放；同一侧里调整顺序不受影响
+    @discardableResult
+    private func tryInsert(_ id: String, into side: Side, before target: String?) -> Bool {
+        let current = store.selected[side] ?? []
+        if !current.contains(id) && !LayoutCapacity.shared.fits(current + [id], side: side) {
+            let name = widgetDef(id)?.name ?? id
+            let where_ = title(side).components(separatedBy: "（").first ?? ""
+            withAnimation { warning = "\(where_)放不下「\(name)」了，先移走一个再加" }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { withAnimation { warning = nil } }
+            return false
+        }
+        store.insert(id, into: side, before: target)
+        return true
+    }
+
     private func title(_ side: Side) -> String {
         if dock.vertical { return side == .left ? "上方（Dock 上面）" : "下方（Dock 下面）" }
         return side == .left ? "左侧（Dock 左边）" : "右侧（Dock 右边）"
@@ -122,11 +143,10 @@ struct LayoutEditorView: View {
                     WidgetChip(id: id)
                         .dropDestination(for: String.self) { items, _ in
                             guard let moving = items.first else { return false }
-                            store.insert(moving, into: side, before: id)
-                            return true
+                            return tryInsert(moving, into: side, before: id)
                         }
                         .contextMenu {
-                            Button("移到另一侧") { store.insert(id, into: side.other, before: nil) }
+                            Button("移到另一侧") { tryInsert(id, into: side.other, before: nil) }
                             Button("移除") { store.remove(id) }
                         }
                 }
@@ -139,8 +159,7 @@ struct LayoutEditorView: View {
             .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
             .dropDestination(for: String.self) { items, _ in
                 guard let moving = items.first else { return false }
-                store.insert(moving, into: side, before: nil)
-                return true
+                return tryInsert(moving, into: side, before: nil)
             }
         }
         .frame(maxWidth: .infinity)
