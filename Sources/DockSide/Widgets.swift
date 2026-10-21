@@ -22,6 +22,29 @@ let allWidgets: [WidgetDef] = [
 
 func widgetDef(_ id: String) -> WidgetDef? { allWidgets.first { $0.id == id } }
 
+/// 每一侧实际能放多长、每个组件多长（由 SideView 量出来），布局编辑器用它判断拖进去放不放得下
+final class LayoutCapacity {
+    static let shared = LayoutCapacity()
+    var avail: [Side: CGFloat] = [:]
+    var sizes: [Side: [String: CGSize]] = [:]
+    var gapLen: [Side: CGFloat] = [:]
+    var extra: [Side: CGFloat] = [:]
+    var vertical = false
+    var minScale: CGFloat = 0.85
+
+    /// 这一组组件放在这一侧能不能全部显示（字最多缩到 minScale）；还没量到就当放得下
+    func fits(_ ids: [String], side: Side) -> Bool {
+        guard let avail = avail[side], let sz = sizes[side] else { return true }
+        var len: CGFloat = 0
+        for id in ids {
+            guard let s = sz[id] else { return true }
+            len += vertical ? s.height : s.width
+        }
+        len += CGFloat(max(0, ids.count - 1)) * (gapLen[side] ?? 1) + (extra[side] ?? 0)
+        return len * minScale <= avail
+    }
+}
+
 // MARK: - 环境：字号、是否竖排紧凑版
 private struct WidgetFontSizeKey: EnvironmentKey { static let defaultValue: CGFloat = 16 }
 private struct CompactKey: EnvironmentKey { static let defaultValue = false }
@@ -118,16 +141,20 @@ struct SideView: View {
     private struct Plan { var ids: [String]; var scale: CGFloat; var contentLen: CGFloat }
 
     /// 算出显示哪几个、缩放多少
-    private func plan(all: [String], vertical: Bool, size: CGFloat, avail: CGFloat) -> Plan? {
-        let lens = all.map { id -> CGFloat? in
+    private func plan(all allIds: [String], vertical: Bool, size: CGFloat, avail: CGFloat) -> Plan? {
+        let allLens = allIds.map { id -> CGFloat? in
             guard let s = itemSizes[id] else { return nil }
             return vertical ? s.height : s.width
         }
-        guard !all.isEmpty, lens.allSatisfy({ $0 != nil }), avail > 0 else { return nil }
+        // 还没量好的组件先不放（只放前面已经量好的），而不是整侧都不显示
+        let measured = allLens.prefix { $0 != nil }.count
+        guard measured > 0, avail > 0 else { return nil }
+        let all = Array(allIds.prefix(measured))
+        let lens = allLens.prefix(measured).map { $0 ?? 0 }
         let gapLen: CGFloat = style == "separate" ? size * (vertical ? 0.4 : 0.5) : 1
         let extra: CGFloat = style == "unified" ? size * 0.8 : 0
         func content(_ n: Int) -> CGFloat {
-            lens.prefix(n).reduce(0) { $0 + ($1 ?? 0) } + CGFloat(max(0, n - 1)) * gapLen
+            lens.prefix(n).reduce(0, +) + CGFloat(max(0, n - 1)) * gapLen
         }
         var n = all.count
         while n > 1, (content(n) + extra) * minScale > avail { n -= 1 }
@@ -150,7 +177,8 @@ struct SideView: View {
 
             ZStack(alignment: nearDock) {
                 // 看不见的测量层：每个组件单独量尺寸
-                measureLayer(all: all, vertical: vertical, size: fontSize, cross: cross, merged: merged)
+                // 量全部组件（包括没放上去的），布局编辑器据此判断放不放得下
+                measureLayer(all: allWidgets.map(\.id), vertical: vertical, size: fontSize, cross: cross, merged: merged)
                     .fixedSize()
                     .hidden()
                     .frame(width: 0, height: 0)
@@ -166,6 +194,9 @@ struct SideView: View {
                 }
             }
             .frame(width: geo.size.width, height: geo.size.height, alignment: nearDock)
+            .onAppear { publishCapacity(avail: avail, size: fontSize, vertical: vertical) }
+            .onChange(of: avail) { publishCapacity(avail: $0, size: fontSize, vertical: vertical) }
+            .onChange(of: fontSize) { publishCapacity(avail: avail, size: $0, vertical: vertical) }
         }
         .onPreferenceChange(ItemSizesKey.self) { sizes in
             // 只在有明显变化时更新，避免秒数跳动引起来回重算
@@ -173,8 +204,20 @@ struct SideView: View {
                 guard let old = itemSizes[id] else { return true }
                 return abs(old.width - s.width) > 0.5 || abs(old.height - s.height) > 0.5
             }
-            if changed || sizes.count != itemSizes.count { itemSizes = sizes }
+            if changed || sizes.count != itemSizes.count {
+                itemSizes = sizes
+                LayoutCapacity.shared.sizes[side] = sizes
+            }
         }
+    }
+
+    private func publishCapacity(avail: CGFloat, size: CGFloat, vertical: Bool) {
+        let c = LayoutCapacity.shared
+        c.avail[side] = avail
+        c.gapLen[side] = style == "separate" ? size * (vertical ? 0.4 : 0.5) : 1
+        c.extra[side] = style == "unified" ? size * 0.8 : 0
+        c.vertical = vertical
+        c.minScale = minScale
     }
 
     private func env<V: View>(_ v: V, size: CGFloat, vertical: Bool) -> some View {
