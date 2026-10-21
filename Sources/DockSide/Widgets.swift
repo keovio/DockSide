@@ -140,7 +140,7 @@ struct SideView: View {
             let cross = vertical ? geo.size.width : geo.size.height
             let r = merged ? dock.radius : 0
             let avail = (vertical ? geo.size.height : geo.size.width) - (merged ? r + cross * 0.45 : 0)
-            let fontSize = max(9, cross * (vertical ? 0.2 : 0.24) * fontScale)
+            let fontSize = max(9, cross * (vertical ? 0.21 : 0.27) * fontScale)
             let all = (store.selected[side] ?? []).filter { widgetDef($0) != nil }
             let p = plan(all: all, vertical: vertical, size: fontSize, avail: avail)
             let nearDock: Alignment = vertical ? (side == .left ? .bottom : .top) : (side == .left ? .trailing : .leading)
