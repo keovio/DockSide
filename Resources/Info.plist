@@ -13,5 +13,7 @@
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>
+    <key>NSCalendarsUsageDescription</key><string>DockSide 需要读取你的日历，用来在 Dock 旁显示今天的日程安排。日程只在你的电脑上处理，不会上传。</string>
+    <key>NSCalendarsFullAccessUsageDescription</key><string>DockSide 需要读取你的日历，用来在 Dock 旁显示今天的日程安排。日程只在你的电脑上处理，不会上传。</string>
 </dict>
 </plist>

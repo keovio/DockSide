@@ -52,6 +52,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             quick.append(item("新建待办…", #selector(newTodo), "n"))
             quick.append(item("从剪贴板导入待办", #selector(importClipboard)))
         }
+        if active.contains("schedule") {
+            quick.append(item("新建日程…", #selector(newSchedule), "s"))
+            quick.append(item("打开日程窗口", #selector(openScheduleWindow)))
+        }
         if active.contains("pomodoro") {
             let p = Pomodoro.shared
             let title = p.running ? "暂停番茄钟" : (p.phase == .idle ? "开始番茄钟" : "继续番茄钟")
@@ -64,6 +68,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             for q in quick { menu.addItem(q) }
             menu.addItem(.separator())
         }
+
+        // 日程数据导入导出：独立于组件是否启用，随时可用
+        menu.addItem(item("导入日程…", #selector(importSchedule)))
+        menu.addItem(item("导出日程…", #selector(exportSchedule)))
+        menu.addItem(.separator())
 
         menu.addItem(item("编辑布局…", #selector(openLayout), "l"))
         menu.addItem(item(hidden ? "显示组件" : "临时隐藏组件", #selector(toggleHidden), "h"))
@@ -88,6 +97,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func newTodo() { TodoIO.askNew() }
     @objc private func importClipboard() { TodoIO.importFromClipboard() }
+    @objc private func newSchedule() { ScheduleIO.askNew() }
+    @objc private func openScheduleWindow() { ScheduleWindow.show() }
+    @objc private func importSchedule() { ScheduleIO.importFromFile() }
+    @objc private func exportSchedule() { ScheduleIO.exportPicker() }
     @objc private func togglePomodoro() { Pomodoro.shared.toggle() }
     @objc private func openLayout() { SettingsWindow.show(.layout) }
     @objc private func openSettings() { SettingsWindow.show(.general) }

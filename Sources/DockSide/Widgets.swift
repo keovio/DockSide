@@ -15,9 +15,10 @@ let allWidgets: [WidgetDef] = [
     WidgetDef(id: "memory",   name: "内存",   symbol: "memorychip")  { AnyView(MemoryWidget()) },
     WidgetDef(id: "battery",  name: "电量",   symbol: "battery.75")  { AnyView(BatteryWidget()) },
     WidgetDef(id: "todo",     name: "待办",   symbol: "checklist")   { AnyView(TodoWidget()) },
+    WidgetDef(id: "schedule", name: "日程",   symbol: "calendar.badge.clock") { AnyView(ScheduleWidget()) },
     WidgetDef(id: "pomodoro", name: "番茄钟", symbol: "timer")       { AnyView(PomodoroWidget()) },
     WidgetDef(id: "music",    name: "正在播放", symbol: "music.note") { AnyView(NowPlayingWidget()) },
-    WidgetDef(id: "countdown", name: "倒数日", symbol: "calendar.badge.clock") { AnyView(CountdownWidget()) },
+    WidgetDef(id: "countdown", name: "倒数日", symbol: "hourglass") { AnyView(CountdownWidget()) },
 ]
 
 func widgetDef(_ id: String) -> WidgetDef? { allWidgets.first { $0.id == id } }
