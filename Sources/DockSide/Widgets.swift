@@ -35,14 +35,21 @@ final class LayoutCapacity {
 
     /// 这一组组件放在这一侧能不能全部显示（字最多缩到 minScale）；还没量到就当放得下
     func fits(_ ids: [String], side: Side) -> Bool {
-        guard let avail = avail[side], let sz = sizes[side] else { return true }
+        // 一侧至少能放一个（真正排布时 plan() 也总会保留第一个）
+        if ids.count <= 1 { return true }
+        guard let len = need(ids, side: side), let avail = avail[side], avail > 1 else { return true }
+        return len * minScale <= avail
+    }
+
+    /// 这组组件需要的长度；有组件没量到就返回 nil
+    func need(_ ids: [String], side: Side) -> CGFloat? {
+        guard let sz = sizes[side] else { return nil }
         var len: CGFloat = 0
         for id in ids {
-            guard let s = sz[id] else { return true }
+            guard let s = sz[id], s.width.isFinite, s.height.isFinite else { return nil }
             len += vertical ? s.height : s.width
         }
-        len += CGFloat(max(0, ids.count - 1)) * (gapLen[side] ?? 1) + (extra[side] ?? 0)
-        return len * minScale <= avail
+        return len + CGFloat(max(0, ids.count - 1)) * (gapLen[side] ?? 1) + (extra[side] ?? 0)
     }
 }
 
