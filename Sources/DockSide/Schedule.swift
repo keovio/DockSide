@@ -457,12 +457,13 @@ enum ScheduleIO {
                                      .plainText, UTType(filenameExtension: "md") ?? .plainText]
         panel.allowsMultipleSelection = true
         guard panel.runModal() == .OK else { return }
-        var total = 0
+        var added = 0, updated = 0
         for url in panel.urls {
             guard let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
-            total += ingest(text, format: ScheduleImport.format(for: url))
+            let r = ingest(text, format: ScheduleImport.format(for: url))
+            added += r.added; updated += r.updated
         }
-        notify(total > 0 ? "已导入 \(total) 条日程" : "没有找到新的日程（重复项会跳过）")
+        notify(result(added, updated))
     }
 
     static func importFromClipboard() {
@@ -470,25 +471,31 @@ enum ScheduleIO {
             notify("剪贴板是空的")
             return
         }
-        let n = ingest(text, format: ScheduleImport.sniffText(text))
-        notify(n > 0 ? "已从剪贴板导入 \(n) 条日程" : "没有找到新的日程（重复项会跳过）")
+        let r = ingest(text, format: ScheduleImport.sniffText(text))
+        notify("剪贴板：" + result(r.added, r.updated))
     }
 
-    /// 解析 → 去重 → 写入本地文件，返回真正新增的条数
+    private static func result(_ added: Int, _ updated: Int) -> String {
+        if added == 0 && updated == 0 { return "没有变化（内容和已有的完全一样）" }
+        var parts: [String] = []
+        if added > 0 { parts.append("新增 \(added) 条") }
+        if updated > 0 { parts.append("覆盖更新 \(updated) 条") }
+        return "导入完成：" + parts.joined(separator: "，")
+    }
+
+    /// 解析 → 合并（已有的覆盖、没有的新增）→ 写入本地文件
     @discardableResult
-    static func ingest(_ text: String, format: ScheduleImport.Format) -> Int {
+    static func ingest(_ text: String, format: ScheduleImport.Format) -> (added: Int, updated: Int) {
         let parsed = ScheduleImport.parse(text, format: format)
-        guard !parsed.isEmpty else { return 0 }
-        var current = localEvents()
-        let fresh = ScheduleImport.dedupe(parsed, existing: current)
-        guard !fresh.isEmpty else { return 0 }
-        current.append(contentsOf: fresh)
-        writeLocal(current)
+        guard !parsed.isEmpty else { return (0, 0) }
+        let r = ScheduleImport.merge(parsed, into: localEvents())
+        guard r.added + r.updated > 0 else { return (0, 0) }
+        writeLocal(r.list)
         // 记录上次导入时间（规格 §6 scheduleLastImport），设置页展示用
         UserDefaults.standard.set(ISO8601DateFormatter().string(from: Date()),
                                   forKey: Pref.scheduleLastImport)
         ScheduleStore.shared.reload()
-        return fresh.count
+        return (r.added, r.updated)
     }
 
     /// 只读本地 JSON 文件（不经过 store，避免受授权状态影响）
