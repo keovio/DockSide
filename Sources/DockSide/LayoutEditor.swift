@@ -60,7 +60,7 @@ struct LayoutEditorView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
-            Text("拖动标签调整顺序，可以拖到另一侧；从组件库拖进来添加，拖回组件库移除。也可以右键操作。")
+            Text("拖动标签调整顺序，可以拖到另一侧；从组件库拖进来添加，拖回组件库移除。也可以右键操作。空间实在不够时，排在后面的组件会自动隐藏。")
                 .font(.callout)
                 .foregroundStyle(.secondary)
 
