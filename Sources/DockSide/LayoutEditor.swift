@@ -121,7 +121,10 @@ struct LayoutEditorView: View {
         if !current.contains(id) && !LayoutCapacity.shared.fits(current + [id], side: side) {
             let name = widgetDef(id)?.name ?? id
             let where_ = title(side).components(separatedBy: "（").first ?? ""
-            withAnimation { warning = "\(where_)放不下「\(name)」了，先移走一个再加" }
+            let c = LayoutCapacity.shared
+            let needLen = Int((c.need(current + [id], side: side) ?? 0) * c.minScale)
+            let availLen = Int(c.avail[side] ?? 0)
+            withAnimation { warning = "\(where_)放不下「\(name)」了，先移走一个再加（需要 \(needLen)pt，可用 \(availLen)pt）" }
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { withAnimation { warning = nil } }
             return false
         }
