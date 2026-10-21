@@ -177,38 +177,38 @@ private struct MarqueeWidthKey: PreferenceKey {
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
 
+/// 固定宽度的标题：放得下就静止显示，放不下就在这个宽度里滚动
 struct Marquee: View {
     let text: String
-    let maxChars: Int
+    let width: CGFloat
     @State private var fullWidth: CGFloat = 0
 
     var body: some View {
-        if text.count <= maxChars {
-            Text(text)
-        } else {
-            Text(String(text.prefix(maxChars)))
-                .hidden()
-                .overlay(alignment: .leading) {
-                    TimelineView(.animation(minimumInterval: 1.0 / 30)) { ctx in
-                        let gap: CGFloat = 40
-                        let cycle = Double(fullWidth + gap)
-                        let offset = cycle > gap ? (ctx.date.timeIntervalSinceReferenceDate * 30).truncatingRemainder(dividingBy: cycle) : 0
-                        HStack(spacing: gap) {
-                            Text(text).fixedSize()
-                            Text(text).fixedSize()
-                        }
-                        .offset(x: -CGFloat(offset))
+        ZStack(alignment: .leading) {
+            if fullWidth <= width {
+                Text(text).fixedSize()
+            } else {
+                TimelineView(.animation(minimumInterval: 1.0 / 30)) { ctx in
+                    let gap: CGFloat = 40
+                    let cycle = Double(fullWidth + gap)
+                    let offset = (ctx.date.timeIntervalSinceReferenceDate * 30).truncatingRemainder(dividingBy: cycle)
+                    HStack(spacing: gap) {
+                        Text(text).fixedSize()
+                        Text(text).fixedSize()
                     }
+                    .offset(x: -CGFloat(offset))
                 }
-                .background(
-                    Text(text).fixedSize().hidden()
-                        .background(GeometryReader { g in
-                            Color.clear.preference(key: MarqueeWidthKey.self, value: g.size.width)
-                        })
-                )
-                .clipped()
-                .onPreferenceChange(MarqueeWidthKey.self) { fullWidth = $0 }
+            }
         }
+        .frame(width: width, alignment: .leading)
+        .clipped()
+        .background(
+            Text(text).fixedSize().hidden()
+                .background(GeometryReader { g in
+                    Color.clear.preference(key: MarqueeWidthKey.self, value: g.size.width)
+                })
+        )
+        .onPreferenceChange(MarqueeWidthKey.self) { fullWidth = $0 }
     }
 }
 
@@ -219,7 +219,7 @@ struct TodoWidget: View {
     @ObservedObject private var store = TodoStore.shared
     @Environment(\.widgetFontSize) private var size
     @Environment(\.compact) private var compact
-    @AppStorage(Pref.todoMaxChars) private var maxChars = 20
+    @AppStorage(Pref.todoTitleChars) private var titleChars = 6
     @AppStorage(Pref.todoHover) private var hoverExpand = true
 
     var body: some View {
@@ -240,10 +240,11 @@ struct TodoWidget: View {
                     }
                     VStack(alignment: .leading, spacing: size * 0.08) {
                         if let first = pending.first {
-                            Marquee(text: first.title, maxChars: maxChars)
+                            Marquee(text: first.title, width: size * 0.95 * CGFloat(titleChars))
                                 .font(.system(size: size * 0.95, weight: .semibold, design: .rounded))
                         } else {
                             Text("全部完成").font(.system(size: size * 0.95, weight: .semibold, design: .rounded))
+                                .frame(width: size * 0.95 * CGFloat(titleChars), alignment: .leading)
                             if total == 0 {
                                 Text("点这里添加待办").font(.system(size: size * 0.74)).opacity(0.7)
                             }
