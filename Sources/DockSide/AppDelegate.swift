@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationDidFinishLaunching(_ n: Notification) {
         Pref.register()
         TodoStore.shared.autoClear()
+        HotkeyManager.shared.start()
 
         // 请求辅助功能权限（用于读取 Dock 位置）
         let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
@@ -80,7 +81,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func openLayout() { SettingsWindow.show(.layout) }
     @objc private func openSettings() { SettingsWindow.show(.general) }
     @objc private func openAX() { openAccessibilitySettings() }
-    @objc private func toggleHidden() { hidden.toggle(); layout() }
+    @objc func toggleHidden() { hidden.toggle(); layout() }
     @objc private func checkUpdates() {
         NSWorkspace.shared.open(URL(string: "https://github.com/keovio/DockSide/releases/latest")!)
     }
@@ -92,38 +93,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - 布局：跟随 Dock 位置和方向
     func layout() {
         guard !hidden,
-              let dock = DockLocator.iconsFrame(),
-              let screen = NSScreen.screens.first(where: { $0.frame.intersects(dock) }) else {
+              let bg = DockLocator.backgroundFrame(),
+              let screen = NSScreen.screens.first(where: { $0.frame.intersects(bg) }) else {
             panels.values.forEach { $0.orderOut(nil) }
             TodoPopover.shared.hide()
             return
         }
         let d = UserDefaults.standard
         let s = screen.frame, vf = screen.visibleFrame
-        let gap = CGFloat(d.double(forKey: Pref.dockGap))
-        let vertical = dock.height > dock.width
+        let merged = d.string(forKey: Pref.style) == "merged"
+        let gap = merged ? 0 : CGFloat(d.double(forKey: Pref.dockGap))
+        let vertical = bg.height > bg.width
+        let thickness = vertical ? bg.width : bg.height
+        let r = (thickness * 0.2).rounded()
+        let overlap = merged ? r : 0          // 融进 Dock 时盖住 Dock 端头的圆角那一段
+
         let state = DockState.shared
         if state.vertical != vertical { state.vertical = vertical }
-        let onLeft = dock.midX < s.midX
+        let onLeft = bg.midX < s.midX
         if state.dockOnLeft != onLeft { state.dockOnLeft = onLeft }
+        if state.radius != r { state.radius = r }
 
         if vertical {
+            let x = bg.minX + CGFloat(d.double(forKey: Pref.alignBottom))
+            let w = bg.width + CGFloat(d.double(forKey: Pref.alignTop) - d.double(forKey: Pref.alignBottom))
             // Dock 在左右两侧：左组放上方，右组放下方
-            place(panels[.left]!,  CGRect(x: dock.minX, y: dock.maxY + gap,
-                                          width: dock.width, height: vf.maxY - dock.maxY - gap - 8))
-            place(panels[.right]!, CGRect(x: dock.minX, y: s.minY + 8,
-                                          width: dock.width, height: dock.minY - s.minY - gap - 8))
+            let aboveY = bg.maxY + gap - overlap
+            place(panels[.left]!,  CGRect(x: x, y: aboveY, width: w, height: vf.maxY - 8 - aboveY))
+            let belowTop = bg.minY - gap + overlap
+            place(panels[.right]!, CGRect(x: x, y: s.minY + 8, width: w, height: belowTop - s.minY - 8))
         } else {
-            // 辅助功能给的图标区和 Dock 实际的玻璃底不完全重合：
-            // 玻璃底顶部比图标区低约 9%，底部多出约 20%（按 macOS 26 实测估算），再加用户微调
-            let h = dock.height
-            let top = dock.maxY - h * 0.09 + CGFloat(d.double(forKey: Pref.alignTop))
-            let bottom = max(s.minY, dock.minY - h * 0.2 + CGFloat(d.double(forKey: Pref.alignBottom)))
-            let barH = max(20, top - bottom)
-            place(panels[.left]!,  CGRect(x: s.minX + 8, y: bottom,
-                                          width: dock.minX - s.minX - gap - 8, height: barH))
-            place(panels[.right]!, CGRect(x: dock.maxX + gap, y: bottom,
-                                          width: s.maxX - dock.maxX - gap - 8, height: barH))
+            let y = bg.minY + CGFloat(d.double(forKey: Pref.alignBottom))
+            let h = bg.height + CGFloat(d.double(forKey: Pref.alignTop) - d.double(forKey: Pref.alignBottom))
+            let leftEnd = bg.minX - gap + overlap
+            place(panels[.left]!,  CGRect(x: s.minX + 8, y: y, width: leftEnd - s.minX - 8, height: h))
+            let rightStart = bg.maxX + gap - overlap
+            place(panels[.right]!, CGRect(x: rightStart, y: y, width: s.maxX - 8 - rightStart, height: h))
         }
     }
 
