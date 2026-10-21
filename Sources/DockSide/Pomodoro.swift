@@ -41,7 +41,7 @@ final class Pomodoro: ObservableObject {
 
     var color: Color {
         switch phase {
-        case .idle: return Color.white.opacity(0.85)
+        case .idle: return Color.primary.opacity(0.85)
         case .focus: return Color(red: 1.0, green: 0.42, blue: 0.36)
         case .rest: return Color(red: 0.36, green: 0.82, blue: 0.55)
         case .countdown: return Color(red: 0.47, green: 0.67, blue: 1.0)
