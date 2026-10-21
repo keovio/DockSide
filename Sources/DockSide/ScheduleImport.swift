@@ -227,6 +227,34 @@ enum ScheduleImport {
         return fresh
     }
 
+    /// 导入合并：已有的覆盖，没有的新增。
+    /// 「已有」= UID 相同；没有 UID 时 = 标题相同且开始时间相同（结束时间、全天、日历等以导入的为准）
+    static func merge(_ incoming: [CalendarEvent], into existing: [CalendarEvent])
+        -> (list: [CalendarEvent], added: Int, updated: Int) {
+        var list = existing
+        var added = 0, updated = 0
+        var touched = Set<Int>()   // 同一批里重复出现的，以最后一条为准，但只算一次
+        for e in incoming {
+            let idx = list.firstIndex { old in
+                if let u = e.uid, !u.isEmpty, let ou = old.uid, !ou.isEmpty { return u == ou }
+                return old.title == e.title && Int(old.start.timeIntervalSince1970) == Int(e.start.timeIntervalSince1970)
+            }
+            if let i = idx {
+                var v = e
+                v.id = list[i].id            // 保留原来的 id，界面上不会当成新事件
+                if v.uid == nil { v.uid = list[i].uid }
+                if list[i] != v, !touched.contains(i) { updated += 1 }
+                touched.insert(i)
+                list[i] = v
+            } else {
+                list.append(e)
+                touched.insert(list.count - 1)
+                added += 1
+            }
+        }
+        return (list, added, updated)
+    }
+
     static func dedupeKey(_ e: CalendarEvent) -> String {
         "\(e.title)|\(Int(e.start.timeIntervalSince1970))|\(Int(e.end.timeIntervalSince1970))"
     }
