@@ -4,7 +4,7 @@ import ServiceManagement
 import ApplicationServices
 
 enum SettingsPage: String, Hashable, CaseIterable {
-    case general, layout, appearance, shortcuts, clock, system, todo, pomodoro, about
+    case general, layout, appearance, shortcuts, clock, system, todo, pomodoro, music, countdown, about
 
     var title: String {
         switch self {
@@ -16,6 +16,8 @@ enum SettingsPage: String, Hashable, CaseIterable {
         case .system: return "系统监控"
         case .todo: return "待办"
         case .pomodoro: return "番茄钟"
+        case .music: return "正在播放"
+        case .countdown: return "倒数日"
         case .about: return "关于"
         }
     }
@@ -30,6 +32,8 @@ enum SettingsPage: String, Hashable, CaseIterable {
         case .system: return "cpu"
         case .todo: return "checklist"
         case .pomodoro: return "timer"
+        case .music: return "music.note"
+        case .countdown: return "calendar.badge.clock"
         case .about: return "info.circle"
         }
     }
@@ -51,7 +55,7 @@ struct SettingsView: View {
                     ForEach([SettingsPage.general, .layout, .appearance, .shortcuts], id: \.self) { item($0) }
                 }
                 Section("组件") {
-                    ForEach([SettingsPage.clock, .system, .todo, .pomodoro], id: \.self) { item($0) }
+                    ForEach([SettingsPage.clock, .system, .todo, .pomodoro, .music, .countdown], id: \.self) { item($0) }
                 }
                 Section {
                     item(.about)
@@ -80,6 +84,8 @@ struct SettingsView: View {
         case .system: SystemPane()
         case .todo: TodoPane()
         case .pomodoro: PomodoroPane()
+        case .music: MusicPane()
+        case .countdown: CountdownPane()
         case .about: AboutPane()
         }
     }
@@ -315,5 +321,24 @@ enum SettingsWindow {
         }
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
+    }
+}
+
+struct MusicPane: View {
+    @AppStorage(Pref.musicTitleChars) private var titleChars = 7
+
+    var body: some View {
+        Form {
+            Section {
+                Picker("歌名宽度", selection: $titleChars) {
+                    ForEach([4, 6, 7, 8, 10, 12], id: \.self) { Text("\($0) 个字").tag($0) }
+                }
+                Text("歌名超出宽度时在里面滚动。").font(.caption).foregroundStyle(.secondary)
+            }
+            Section("操作") {
+                Text("点封面：播放 / 暂停；右边按钮：暂停、下一首；右键：上一首。支持 Music、Spotify、网易云、浏览器等所有在控制中心里能看到的播放。").foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
     }
 }
