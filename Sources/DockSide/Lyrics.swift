@@ -8,7 +8,8 @@ struct LyricLine: Identifiable, Equatable {
     let text: String
 }
 
-/// 歌词：从 LRCLIB（lrclib.net，免费、无需账号）下载带时间轴的歌词，缓存在本地
+/// 歌词：LRCLIB（lrclib.net，免费、无需账号）+ 网易云兜底，带时间轴，缓存在本地。
+/// 中文歌名先查网易云（简体、覆盖全），其他先查 LRCLIB。
 final class Lyrics: ObservableObject {
     static let shared = Lyrics()
 
@@ -44,7 +45,7 @@ final class Lyrics: ObservableObject {
         guard !title.isEmpty else { status = .idle; return }
         status = .loading
 
-        let file = cacheDir.appendingPathComponent(Self.hash(key) + ".txt")
+        let file = cacheDir.appendingPathComponent("v2-" + Self.hash(key) + ".txt")
         if let cached = try? String(contentsOf: file, encoding: .utf8) {
             apply(cached, key: key)
             return
@@ -71,6 +72,54 @@ final class Lyrics: ObservableObject {
 
     // MARK: 网络
     private static func fetch(title: String, artist: String, duration: Double) async -> String? {
+        let chinese = (title + artist).unicodeScalars.contains { (0x4E00...0x9FFF).contains($0.value) }
+        if chinese {
+            if let t = await netease(title: title, artist: artist, duration: duration) { return t }
+            return await lrclib(title: title, artist: artist, duration: duration)
+        }
+        if let t = await lrclib(title: title, artist: artist, duration: duration) { return t }
+        return await netease(title: title, artist: artist, duration: duration)
+    }
+
+    /// 网易云（非官方公开接口，可能随时变化；失败就当没找到）
+    private static func netease(title: String, artist: String, duration: Double) async -> String? {
+        var c = URLComponents(string: "https://music.163.com/api/search/get")!
+        c.queryItems = [URLQueryItem(name: "s", value: artist.isEmpty ? title : "\(title) \(artist)"),
+                        URLQueryItem(name: "type", value: "1"), URLQueryItem(name: "limit", value: "10")]
+        guard let obj = await json(c.url!, referer: "https://music.163.com") as? [String: Any],
+              let result = obj["result"] as? [String: Any],
+              let songs = result["songs"] as? [[String: Any]] else { return nil }
+
+        func norm(_ s: String) -> String { s.lowercased().replacingOccurrences(of: " ", with: "") }
+        let wantTitle = norm(title), wantArtists = artist.components(separatedBy: CharacterSet(charactersIn: ",&/、")).map(norm).filter { !$0.isEmpty }
+        // 打分：歌手对上最重要，其次歌名完全一致，再看时长差
+        let scored: [(id: Int, score: Double)] = songs.compactMap { song in
+            guard let id = song["id"] as? Int, let name = song["name"] as? String else { return nil }
+            let artists = (song["artists"] as? [[String: Any]] ?? []).compactMap { $0["name"] as? String }.map(norm)
+            let artistHit = wantArtists.isEmpty || wantArtists.contains { w in artists.contains { $0.contains(w) || w.contains($0) } }
+            let titleExact = norm(name) == wantTitle
+            let dur = (song["duration"] as? Double ?? 0) / 1000
+            let durOK = duration <= 0 || dur <= 0 || abs(dur - duration) < 4
+            guard artistHit || (titleExact && durOK && duration > 0) else { return nil }
+            var score = 0.0
+            if artistHit { score += 100 }
+            if titleExact { score += 50 } else if norm(name).hasPrefix(wantTitle) { score += 20 }
+            if duration > 0 && dur > 0 { score -= abs(dur - duration) }
+            return (id, score)
+        }
+        for cand in scored.sorted(by: { $0.score > $1.score }).prefix(3) {
+            var l = URLComponents(string: "https://music.163.com/api/song/lyric")!
+            l.queryItems = [URLQueryItem(name: "id", value: String(cand.id)), URLQueryItem(name: "lv", value: "1"), URLQueryItem(name: "tv", value: "-1")]
+            if let o = await json(l.url!, referer: "https://music.163.com") as? [String: Any],
+               let lrc = (o["lrc"] as? [String: Any])?["lyric"] as? String,
+               !lrc.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return lrc
+            }
+        }
+        return nil
+    }
+
+    private static func lrclib(title: String, artist: String, duration: Double) async -> String? {
         var c = URLComponents(string: "https://lrclib.net/api/get")!
         c.queryItems = [URLQueryItem(name: "track_name", value: title), URLQueryItem(name: "artist_name", value: artist)]
         if duration > 0 { c.queryItems?.append(URLQueryItem(name: "duration", value: String(Int(duration.rounded())))) }
@@ -96,9 +145,14 @@ final class Lyrics: ObservableObject {
         return nil
     }
 
-    private static func json(_ url: URL) async -> Any? {
+    private static func json(_ url: URL, referer: String? = nil) async -> Any? {
         var req = URLRequest(url: url, timeoutInterval: 10)
-        req.setValue("DockSide (https://github.com/keovio/DockSide)", forHTTPHeaderField: "User-Agent")
+        if let referer {
+            req.setValue(referer, forHTTPHeaderField: "Referer")
+            req.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15", forHTTPHeaderField: "User-Agent")
+        } else {
+            req.setValue("DockSide (https://github.com/keovio/DockSide)", forHTTPHeaderField: "User-Agent")
+        }
         guard let result = try? await URLSession.shared.data(for: req),
               (result.1 as? HTTPURLResponse)?.statusCode == 200 else { return nil }
         let data = result.0
