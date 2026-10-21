@@ -220,7 +220,16 @@ struct PomodoroPane: View {
 
     var body: some View {
         Form {
-            Section("时长") {
+            Section("开始") {
+                HStack {
+                    Button("番茄钟") { pomo.startFocus() }
+                    Button("正计时") { pomo.startStopwatch() }
+                    Button("自定义倒计时…") { pomo.askCustomMinutes() }
+                    if pomo.phase != .idle { Button("停止") { pomo.reset() } }
+                }
+                Text("也可以直接点 Dock 旁的组件选择模式；运行中点一下暂停 / 继续。").font(.caption).foregroundStyle(.secondary)
+            }
+            Section("番茄钟时长") {
                 Stepper("专注 \(focus) 分钟", value: $focus, in: 5...120, step: 5)
                 Stepper("休息 \(rest) 分钟", value: $rest, in: 1...60)
             }
@@ -230,7 +239,6 @@ struct PomodoroPane: View {
             }
             Section {
                 LabeledContent("今日已完成", value: "\(pomo.completedToday) 个番茄")
-                Text("在 Dock 旁点组件开始 / 暂停，右键可选时长或自定义倒计时。").font(.caption).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
