@@ -2,6 +2,7 @@ import AppKit
 import EventKit
 import SwiftUI
 import UniformTypeIdentifiers
+import CryptoKit
 
 // MARK: - 数据
 struct CalendarEvent: Codable, Identifiable, Hashable {
@@ -16,6 +17,14 @@ struct CalendarEvent: Codable, Identifiable, Hashable {
     var ekEventID: String?
     /// 导入的 ICS 里的 UID，用于重复导入时去重
     var uid: String?
+    /// 系统日历里这一次发生的原始开始时间（重复日程每次发生共用同一个 ekEventID，靠它定位是哪一次）
+    var occurrenceStart: Date?
+
+    /// 由「系统日历 ID + 这次的开始时间」算出固定的 id，每分钟刷新时列表行不会被重建
+    static func stableID(_ ekID: String, _ start: Date) -> UUID {
+        let d = Array(SHA256.hash(data: Data("\(ekID)|\(start.timeIntervalSince1970)".utf8)))
+        return UUID(uuid: (d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7], d[8], d[9], d[10], d[11], d[12], d[13], d[14], d[15]))
+    }
 
     var isLocal: Bool { ekEventID == nil }
     var duration: TimeInterval { max(60, end.timeIntervalSince(start)) }
@@ -40,8 +49,9 @@ final class ScheduleStore: ObservableObject {
     private let ek = EKEventStore()
     private var refreshTimer: Timer?
     /// 当前已加载的时间窗口
-    private var loadedFrom: Date = .distantPast
-    private var loadedTo: Date = .distantFuture
+    // 注意：EventKit 的查询跨度最多 4 年，不能用 distantPast/distantFuture，否则什么都查不到
+    private var loadedFrom: Date = Calendar.current.date(byAdding: .day, value: -1, to: Calendar.current.startOfDay(for: Date()))!
+    private var loadedTo: Date = Calendar.current.startOfDay(for: Date()).addingTimeInterval(22 * 86400)
     /// 一次只拉这么多天，翻周视图时按需重拉
     private let chunkDays: Double = 21
 
@@ -93,13 +103,11 @@ final class ScheduleStore: ObservableObject {
     func reload() {
         guard auth == .granted else {
             events = loadLocal()
-            loadedFrom = .distantPast
-            loadedTo = .distantFuture
             return
         }
-        calendars = ek.calendars(for: .event)
-            .filter { $0.allowsContentModifications || !$0.isSubscribed }
-            .sorted { $0.title < $1.title }
+        // 订阅日历（节假日、生日）的事件也会显示，所以 chips 里也要列出来才能筛掉
+        calendars = ek.calendars(for: .event).sorted { $0.title < $1.title }
+        coverToday()
         loadEvents(from: loadedFrom, to: loadedTo)
     }
 
@@ -108,10 +116,25 @@ final class ScheduleStore: ObservableObject {
         let d = days ?? chunkDays
         let from = Calendar.current.startOfDay(for: from)
         let to = from.addingTimeInterval(d * 86400)
-        if from >= loadedFrom, to <= loadedTo, !events.isEmpty { return }
-        loadedFrom = from
-        loadedTo = to
+        if from >= loadedFrom, to <= loadedTo { return }
+        // 和已加载范围合并（Dock 旁的组件永远要有今天的数据），跨度不超过 EventKit 的 4 年上限
+        loadedFrom = min(from, loadedFrom)
+        loadedTo = max(to, loadedTo)
+        if loadedTo.timeIntervalSince(loadedFrom) > 1400 * 86400 { loadedFrom = from; loadedTo = to }
         reload()
+    }
+
+    /// 已加载范围必须包含「昨天 ~ 3 天后」（过了午夜或周视图翻到别处时也一样）
+    private func coverToday() {
+        let today = Calendar.current.startOfDay(for: Date())
+        let needFrom = today.addingTimeInterval(-86400), needTo = today.addingTimeInterval(4 * 86400)
+        if loadedFrom > needFrom || loadedTo < needTo || loadedTo.timeIntervalSince(loadedFrom) > 1400 * 86400 {
+            loadedFrom = min(loadedFrom, needFrom)
+            loadedTo = max(loadedTo, today.addingTimeInterval(22 * 86400))
+            if loadedTo.timeIntervalSince(loadedFrom) > 1400 * 86400 {
+                loadedFrom = needFrom; loadedTo = today.addingTimeInterval(22 * 86400)
+            }
+        }
     }
 
     private func loadEvents(from: Date, to: Date) {
@@ -119,15 +142,17 @@ final class ScheduleStore: ObservableObject {
         let pred = ek.predicateForEvents(withStart: from, end: to, calendars: nil)
         let found = ek.events(matching: pred)
         events = found.map { ev in
-            CalendarEvent(
-                id: UUID(),
+            let ekID = ev.eventIdentifier ?? ev.calendarItemIdentifier
+            return CalendarEvent(
+                id: CalendarEvent.stableID(ekID, ev.startDate),
                 title: ev.title ?? "（无标题）",
                 start: ev.startDate,
                 end: ev.endDate,
                 isAllDay: ev.isAllDay,
                 calendarName: ev.calendar?.title ?? "",
                 calendarColor: hexString(from: ev.calendar?.cgColor),
-                ekEventID: ev.eventIdentifier ?? ev.calendarItemIdentifier
+                ekEventID: ekID,
+                occurrenceStart: ev.startDate
             )
         }
         .sorted(by: eventSort)
@@ -155,6 +180,23 @@ final class ScheduleStore: ObservableObject {
 
     // MARK: 写入
 
+    /// 找到列表里这一条对应的系统日历事件；重复日程要按开始时间找到具体那一次，否则会改/删到第一次
+    private func ekEvent(for e: CalendarEvent) -> EKEvent? {
+        guard let id = e.ekEventID else { return nil }
+        if let occ = e.occurrenceStart {
+            let pred = ek.predicateForEvents(withStart: occ.addingTimeInterval(-1), end: occ.addingTimeInterval(86400), calendars: nil)
+            if let hit = ek.events(matching: pred).first(where: {
+                ($0.eventIdentifier ?? $0.calendarItemIdentifier) == id && abs($0.startDate.timeIntervalSince(occ)) < 1
+            }) { return hit }
+        }
+        return ek.event(withIdentifier: id)
+    }
+
+    private func save(_ ev: EKEvent) {
+        do { try ek.save(ev, span: .thisEvent, commit: true) }
+        catch { ScheduleIO.notify("保存到系统日历失败：\(error.localizedDescription)") }
+    }
+
     func add(_ event: CalendarEvent) {
         if auth == .granted {
             let ev = EKEvent(eventStore: ek)
@@ -162,8 +204,12 @@ final class ScheduleStore: ObservableObject {
             ev.startDate = event.start
             ev.endDate = event.end
             ev.isAllDay = event.isAllDay
-            ev.calendar = ek.defaultCalendarForNewEvents
-            try? ek.save(ev, span: .thisEvent, commit: true)
+            guard let cal = ek.defaultCalendarForNewEvents else {
+                ScheduleIO.notify("系统日历里没有可写入的默认日历，请先在「日历」App 里设置")
+                return
+            }
+            ev.calendar = cal
+            save(ev)
             reload()
         } else {
             var list = loadLocal()
@@ -175,11 +221,11 @@ final class ScheduleStore: ObservableObject {
 
     func update(_ event: CalendarEvent) {
         if let ekID = event.ekEventID, auth == .granted {
-            guard let ev = ek.event(withIdentifier: ekID) else { return }
+            guard ekID.isEmpty == false, let ev = ekEvent(for: event) else { return }
             ev.title = event.title
             ev.startDate = event.start
             ev.endDate = event.end
-            try? ek.save(ev, span: .thisEvent, commit: true)
+            save(ev)
             reload()
         } else {
             var list = loadLocal()
@@ -194,8 +240,9 @@ final class ScheduleStore: ObservableObject {
 
     func remove(_ event: CalendarEvent) {
         if let ekID = event.ekEventID, auth == .granted {
-            guard let ev = ek.event(withIdentifier: ekID) else { return }
-            try? ek.remove(ev, span: .thisEvent, commit: true)
+            guard ekID.isEmpty == false, let ev = ekEvent(for: event) else { return }
+            do { try ek.remove(ev, span: .thisEvent, commit: true) }
+            catch { ScheduleIO.notify("从系统日历删除失败：\(error.localizedDescription)") }
             reload()
         } else {
             var list = loadLocal()
@@ -212,7 +259,7 @@ final class ScheduleStore: ObservableObject {
         let t = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
             guard let self else { return }
             self.refreshAuth()
-            if self.auth == .granted { self.loadEvents(from: self.loadedFrom, to: self.loadedTo) }
+            if self.auth == .granted { self.coverToday(); self.loadEvents(from: self.loadedFrom, to: self.loadedTo) }
             else { self.events = self.loadLocal() }
             ScheduleSound.check(self.events)
         }
@@ -564,6 +611,7 @@ struct ScheduleWidget: View {
     @AppStorage(Pref.scheduleTitleChars) private var titleChars = 6
     @AppStorage(Pref.scheduleHover) private var hoverExpand = true
     @AppStorage(Pref.schedule24h) private var h24 = true
+    @Environment(\.measuring) private var measuring
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { ctx in
@@ -573,7 +621,7 @@ struct ScheduleWidget: View {
         .contentShape(Rectangle())
         .onTapGesture { SchedulePopover.shared.toggle() }
         .onHover { inside in
-            guard hoverExpand else { return }
+            guard hoverExpand, !measuring else { return }
             if inside { SchedulePopover.shared.show() } else { SchedulePopover.shared.scheduleHide() }
         }
     }
@@ -620,8 +668,7 @@ struct ScheduleWidget: View {
                             .font(.system(size: size * 0.9, weight: .medium, design: .rounded))
                             .opacity(0.9)
                     }
-                    Marquee(text: e.title, width: size * 0.95 * CGFloat(titleChars))
-                        .font(.system(size: size * 0.95, weight: .semibold, design: .rounded))
+                    Marquee(text: e.title, width: size * 0.95 * CGFloat(titleChars), fontSize: size * 0.95)
                     if let tail = trailingLabel(e, now: now) {
                         Text(tail)
                             .font(.system(size: size * 0.74))
