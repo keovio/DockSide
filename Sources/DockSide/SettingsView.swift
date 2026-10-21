@@ -207,7 +207,7 @@ struct SystemPane: View {
 }
 
 struct TodoPane: View {
-    @AppStorage(Pref.todoMaxChars) private var maxChars = 20
+    @AppStorage(Pref.todoTitleChars) private var titleChars = 6
     @AppStorage(Pref.todoHover) private var hover = true
     @AppStorage(Pref.todoSound) private var sound = true
     @AppStorage(Pref.todoAutoClear) private var autoClear = true
@@ -215,10 +215,10 @@ struct TodoPane: View {
     var body: some View {
         Form {
             Section("Dock 旁显示") {
-                Picker("标题最长", selection: $maxChars) {
-                    ForEach([12, 16, 20, 30], id: \.self) { Text("\($0) 字").tag($0) }
+                Picker("标题宽度", selection: $titleChars) {
+                    ForEach([4, 6, 8, 10, 12], id: \.self) { Text("\($0) 个字").tag($0) }
                 }
-                Text("超出部分会滚动显示。").font(.caption).foregroundStyle(.secondary)
+                Text("卡片宽度固定，标题更长会在里面滚动显示。").font(.caption).foregroundStyle(.secondary)
                 Toggle("鼠标悬停展开清单", isOn: $hover)
             }
             Section {
