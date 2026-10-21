@@ -1,89 +1,159 @@
 import SwiftUI
 
-// MARK: - 组件注册表（加新组件 = 在这里加一行）
+// MARK: - 组件注册表（加新组件 = 在这里加一行 + 写一个 View）
 struct WidgetDef {
     let id: String
     let name: String
+    let symbol: String
     let make: () -> AnyView
 }
 
 let allWidgets: [WidgetDef] = [
-    WidgetDef(id: "clock",   name: "时钟") { AnyView(Ticking(every: 1)  { Text(Date(), format: .dateTime.hour().minute().second()) }) },
-    WidgetDef(id: "date",    name: "日期") { AnyView(Ticking(every: 60) { Text(Date(), format: .dateTime.month().day().weekday(.wide)) }) },
-    WidgetDef(id: "cpu",     name: "CPU")  { AnyView(Ticking(every: 2)  { Label("\(Int(Metrics.cpu.usage() * 100))%", systemImage: "cpu") }) },
-    WidgetDef(id: "memory",  name: "内存") { AnyView(Ticking(every: 5)  { Label("\(Int(Metrics.memoryUsage() * 100))%", systemImage: "memorychip") }) },
-    WidgetDef(id: "battery", name: "电量") { AnyView(Ticking(every: 30) { Label(Metrics.batteryLevel().map { "\($0)%" } ?? "—", systemImage: "battery.75") }) },
-    WidgetDef(id: "todo",    name: "待办") { AnyView(TodoWidget()) },
+    WidgetDef(id: "clock",    name: "时钟",   symbol: "clock")       { AnyView(ClockWidget()) },
+    WidgetDef(id: "date",     name: "日期",   symbol: "calendar")    { AnyView(DateWidget()) },
+    WidgetDef(id: "cpu",      name: "CPU",    symbol: "cpu")         { AnyView(CPUWidget()) },
+    WidgetDef(id: "memory",   name: "内存",   symbol: "memorychip")  { AnyView(MemoryWidget()) },
+    WidgetDef(id: "battery",  name: "电量",   symbol: "battery.75")  { AnyView(BatteryWidget()) },
+    WidgetDef(id: "todo",     name: "待办",   symbol: "checklist")   { AnyView(TodoWidget()) },
+    WidgetDef(id: "pomodoro", name: "番茄钟", symbol: "timer")       { AnyView(PomodoroWidget()) },
 ]
 
-// MARK: - 字号随 Dock 高度自动调整
+func widgetDef(_ id: String) -> WidgetDef? { allWidgets.first { $0.id == id } }
+
+// MARK: - 环境：字号、是否竖排紧凑版
 private struct WidgetFontSizeKey: EnvironmentKey { static let defaultValue: CGFloat = 16 }
+private struct CompactKey: EnvironmentKey { static let defaultValue = false }
 extension EnvironmentValues {
     var widgetFontSize: CGFloat {
         get { self[WidgetFontSizeKey.self] }
         set { self[WidgetFontSizeKey.self] = newValue }
     }
+    /// Dock 在左右两侧时为 true，组件显示竖排紧凑版
+    var compact: Bool {
+        get { self[CompactKey.self] }
+        set { self[CompactKey.self] = newValue }
+    }
 }
 
-// MARK: - 通用胶囊外观（尺寸跟随字号）
-struct PillStyle: ViewModifier {
+/// 组件统一的文字样式
+struct WidgetText: ViewModifier {
     @Environment(\.widgetFontSize) private var size
     func body(content: Content) -> some View {
         content
             .font(.system(size: size, weight: .medium, design: .rounded))
             .monospacedDigit()
             .lineLimit(1)
-            .fixedSize()                       // 文字永不截断
             .foregroundStyle(.white)
-            .padding(.horizontal, size * 0.8)
-            .padding(.vertical, size * 0.45)
-            .background(.ultraThinMaterial, in: Capsule())
     }
 }
 
-// MARK: - 定时刷新的胶囊
-struct Ticking<Content: View>: View {
-    let every: TimeInterval
-    @ViewBuilder var content: () -> Content
-    var body: some View {
-        TimelineView(.periodic(from: .now, by: every)) { _ in
-            content().modifier(PillStyle())
+extension View {
+    /// 深色毛玻璃底
+    func glass<S: InsettableShape>(_ shape: S) -> some View {
+        background {
+            ZStack {
+                shape.fill(.ultraThinMaterial)
+                shape.fill(Color.black.opacity(0.28))
+                shape.strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
+            }
         }
     }
 }
 
-private struct ContentWidthKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+/// 进度环
+struct ProgressRing<Label: View>: View {
+    let progress: Double
+    let size: CGFloat
+    let lineWidth: CGFloat
+    var color: Color = Color(red: 0.36, green: 0.82, blue: 0.55)
+    @ViewBuilder var label: () -> Label
+
+    var body: some View {
+        ZStack {
+            Circle().stroke(Color.white.opacity(0.2), lineWidth: lineWidth)
+            Circle()
+                .trim(from: 0, to: max(0, min(1, progress)))
+                .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+            label()
+        }
+        .frame(width: size, height: size)
+    }
 }
 
-// MARK: - 一侧的组件排布：按 Dock 高度定字号，放不下就整体等比缩小
+private struct ContentSizeKey: PreferenceKey {
+    static let defaultValue: CGSize = .zero
+    static func reduce(value: inout CGSize, nextValue: () -> CGSize) { value = nextValue() }
+}
+
+// MARK: - 一侧的组件排布
+/// 横向 Dock：左组在 Dock 左边、右组在右边；竖向 Dock：左组在上方、右组在下方（紧凑版）。
+/// 字号按 Dock 粗细自动计算，放不下就整体等比缩小。
 struct SideView: View {
     @ObservedObject var store: WidgetStore
     let side: Side
-    @State private var contentWidth: CGFloat = 0
+    @ObservedObject private var dock = DockState.shared
+    @AppStorage(Pref.style) private var style = "unified"
+    @AppStorage(Pref.fontScale) private var fontScale = 1.0
+    @State private var contentSize: CGSize = .zero
 
     var body: some View {
         GeometryReader { geo in
-            let h = geo.size.height
-            let fontSize = max(10, h * 0.26)
-            let anchor: UnitPoint = side == .left ? .trailing : .leading
-            let scale = contentWidth > 0 ? min(1, geo.size.width / contentWidth) : 1
+            let vertical = dock.vertical
+            let base = vertical ? geo.size.width * 0.2 : geo.size.height * 0.26
+            let fontSize = max(9, base * fontScale)
+            let ids = (store.selected[side] ?? []).filter { widgetDef($0) != nil }
+            let scale: CGFloat = vertical
+                ? (contentSize.height > 0 ? min(1, geo.size.height / contentSize.height) : 1)
+                : (contentSize.width > 0 ? min(1, geo.size.width / contentSize.width) : 1)
+            let nearDock: Alignment = vertical ? (side == .left ? .bottom : .top) : (side == .left ? .trailing : .leading)
+            let anchor: UnitPoint = vertical ? (side == .left ? .bottom : .top) : (side == .left ? .trailing : .leading)
 
-            HStack(spacing: fontSize * 0.5) {
-                ForEach(store.selected[side] ?? [], id: \.self) { id in
-                    allWidgets.first { $0.id == id }?.make()
+            row(ids: ids, vertical: vertical, size: fontSize)
+                .environment(\.widgetFontSize, fontSize)
+                .environment(\.compact, vertical)
+                .fixedSize()
+                .background(GeometryReader { g in
+                    Color.clear.preference(key: ContentSizeKey.self, value: g.size)
+                })
+                .scaleEffect(scale, anchor: anchor)
+                .frame(width: geo.size.width, height: geo.size.height, alignment: nearDock)
+        }
+        .onPreferenceChange(ContentSizeKey.self) { contentSize = $0 }
+    }
+
+    @ViewBuilder
+    private func row(ids: [String], vertical: Bool, size: CGFloat) -> some View {
+        if ids.isEmpty {
+            EmptyView()
+        } else if style == "unified" {
+            // 合成一条：一个玻璃底，组件之间细线分隔
+            let layout = vertical ? AnyLayout(VStackLayout(spacing: 0)) : AnyLayout(HStackLayout(spacing: 0))
+            layout {
+                ForEach(Array(ids.enumerated()), id: \.element) { i, id in
+                    widgetDef(id)!.make()
+                        .padding(vertical ? .vertical : .horizontal, size * 0.55)
+                    if i < ids.count - 1 {
+                        Rectangle()
+                            .fill(Color.white.opacity(0.25))
+                            .frame(width: vertical ? size * 1.6 : 1, height: vertical ? 1 : size * 1.2)
+                    }
                 }
             }
-            .environment(\.widgetFontSize, fontSize)
-            .fixedSize()
-            .background(GeometryReader { g in
-                Color.clear.preference(key: ContentWidthKey.self, value: g.size.width)
-            })
-            .scaleEffect(scale, anchor: anchor)
-            // 左侧贴近 Dock 右对齐，右侧左对齐
-            .frame(width: geo.size.width, height: h, alignment: side == .left ? .trailing : .leading)
+            .padding(vertical ? .vertical : .horizontal, size * 0.4)
+            .padding(vertical ? .horizontal : .vertical, size * 0.45)
+            .glass(RoundedRectangle(cornerRadius: vertical ? size * 0.9 : size * 3, style: .continuous))
+        } else {
+            // 分开的胶囊
+            let layout = vertical ? AnyLayout(VStackLayout(spacing: size * 0.4)) : AnyLayout(HStackLayout(spacing: size * 0.5))
+            layout {
+                ForEach(ids, id: \.self) { id in
+                    widgetDef(id)!.make()
+                        .padding(.horizontal, size * (vertical ? 0.45 : 0.8))
+                        .padding(.vertical, size * 0.45)
+                        .glass(RoundedRectangle(cornerRadius: vertical ? size * 0.9 : size * 3, style: .continuous))
+                }
+            }
         }
-        .onPreferenceChange(ContentWidthKey.self) { contentWidth = $0 }
     }
 }
