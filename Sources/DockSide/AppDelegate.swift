@@ -96,7 +96,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             TodoPopover.shared.hide()
             return
         }
-        let s = screen.frame, vf = screen.visibleFrame, gap: CGFloat = 10
+        let d = UserDefaults.standard
+        let s = screen.frame, vf = screen.visibleFrame
+        let gap = CGFloat(d.double(forKey: Pref.dockGap))
         let vertical = dock.height > dock.width
         let state = DockState.shared
         if state.vertical != vertical { state.vertical = vertical }
@@ -106,14 +108,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if vertical {
             // Dock 在左右两侧：左组放上方，右组放下方
             place(panels[.left]!,  CGRect(x: dock.minX, y: dock.maxY + gap,
-                                          width: dock.width, height: vf.maxY - dock.maxY - gap * 2))
-            place(panels[.right]!, CGRect(x: dock.minX, y: s.minY + gap,
-                                          width: dock.width, height: dock.minY - s.minY - gap * 2))
+                                          width: dock.width, height: vf.maxY - dock.maxY - gap - 8))
+            place(panels[.right]!, CGRect(x: dock.minX, y: s.minY + 8,
+                                          width: dock.width, height: dock.minY - s.minY - gap - 8))
         } else {
-            place(panels[.left]!,  CGRect(x: s.minX + gap, y: dock.minY,
-                                          width: dock.minX - s.minX - gap * 2, height: dock.height))
-            place(panels[.right]!, CGRect(x: dock.maxX + gap, y: dock.minY,
-                                          width: s.maxX - dock.maxX - gap * 2, height: dock.height))
+            // 辅助功能给的图标区和 Dock 实际的玻璃底不完全重合：
+            // 玻璃底顶部比图标区低约 9%，底部多出约 20%（按 macOS 26 实测估算），再加用户微调
+            let h = dock.height
+            let top = dock.maxY - h * 0.09 + CGFloat(d.double(forKey: Pref.alignTop))
+            let bottom = max(s.minY, dock.minY - h * 0.2 + CGFloat(d.double(forKey: Pref.alignBottom)))
+            let barH = max(20, top - bottom)
+            place(panels[.left]!,  CGRect(x: s.minX + 8, y: bottom,
+                                          width: dock.minX - s.minX - gap - 8, height: barH))
+            place(panels[.right]!, CGRect(x: dock.maxX + gap, y: bottom,
+                                          width: s.maxX - dock.maxX - gap - 8, height: barH))
         }
     }
 
