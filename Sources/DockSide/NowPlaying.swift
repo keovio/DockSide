@@ -99,11 +99,10 @@ struct NowPlayingWidget: View {
                     VStack(alignment: .leading, spacing: size * 0.05) {
                         let w = size * 0.95 * CGFloat(titleChars)
                         if np.hasTrack {
-                            Marquee(text: np.title, width: w)
-                                .font(.system(size: size * 0.95, weight: .semibold, design: .rounded))
+                            Marquee(text: np.title, width: w, fontSize: size * 0.95)
                             if !np.artist.isEmpty {
-                                Text(np.artist).font(.system(size: size * 0.72)).opacity(0.7)
-                                    .frame(width: w, alignment: .leading)
+                                Marquee(text: np.artist, width: w, fontSize: size * 0.72, semibold: false)
+                                    .opacity(0.7)
                             }
                         } else {
                             Text("未在播放").font(.system(size: size * 0.95, weight: .semibold, design: .rounded))
