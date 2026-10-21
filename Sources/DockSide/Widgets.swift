@@ -108,7 +108,7 @@ struct SideView: View {
     @ObservedObject private var dock = DockState.shared
     @AppStorage(Pref.style) private var style = "merged"
     @AppStorage(Pref.fontScale) private var fontScale = 1.0
-    @AppStorage(Pref.glassTint) private var glassTint = 0.3
+    @AppStorage(Pref.glassTint) private var glassTint = 0.38
     @Environment(\.colorScheme) private var scheme
     @State private var itemSizes: [String: CGSize] = [:]
     private let minScale: CGFloat = 0.85   // 字不能缩得太小，低于这个比例就少放一个组件
@@ -256,7 +256,7 @@ struct SideView: View {
                 // 系统材质比 Dock 浅，压暗一点对上 Dock 的颜色（深色模式少压一些）
                 Color.black.opacity(glassTint * (scheme == .dark ? 0.4 : 1))
             }
-            .clipShape(MergedShape(dockEdge: edge, radius: r, cover: 2), style: FillStyle(eoFill: true))
+            .clipShape(MergedShape(dockEdge: edge, radius: r, cover: 3), style: FillStyle(eoFill: true))
         )
     }
 
@@ -333,10 +333,11 @@ struct MergedShape: Shape {
         let dockRect: CGRect
         let c = cover
         switch dockEdge {
-        case .leading:  dockRect = CGRect(x: rect.minX - big, y: rect.minY, width: big + r - c, height: rect.height)
-        case .trailing: dockRect = CGRect(x: rect.maxX - r + c, y: rect.minY, width: big + r, height: rect.height)
-        case .top:      dockRect = CGRect(x: rect.minX, y: rect.minY - big, width: rect.width, height: big + r - c)
-        case .bottom:   dockRect = CGRect(x: rect.minX, y: rect.maxY - r + c, width: rect.width, height: big + r)
+        // 洞四周都往里缩 c：顶/底/端头都盖住 Dock 边缘 c 点，就算位置差一两点也不会露缝
+        case .leading:  dockRect = CGRect(x: rect.minX - big, y: rect.minY + c, width: big + r - c, height: rect.height - 2 * c)
+        case .trailing: dockRect = CGRect(x: rect.maxX - r + c, y: rect.minY + c, width: big + r, height: rect.height - 2 * c)
+        case .top:      dockRect = CGRect(x: rect.minX + c, y: rect.minY - big, width: rect.width - 2 * c, height: big + r - c)
+        case .bottom:   dockRect = CGRect(x: rect.minX + c, y: rect.maxY - r + c, width: rect.width - 2 * c, height: big + r)
         }
         // 实测 Dock 的圆角是正圆弧（半径约 13pt），不是"连续曲率"圆角；用 .continuous 会在角上露出缝
         if r > 0 { p.addRoundedRect(in: dockRect, cornerSize: CGSize(width: r, height: r), style: .circular) }
