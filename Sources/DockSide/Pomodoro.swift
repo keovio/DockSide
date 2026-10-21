@@ -6,7 +6,7 @@ import UserNotifications
 final class Pomodoro: ObservableObject {
     static let shared = Pomodoro()
 
-    enum Phase { case idle, focus, rest, countdown }
+    enum Phase { case idle, focus, rest, countdown, stopwatch }
 
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var running = false
@@ -16,6 +16,7 @@ final class Pomodoro: ObservableObject {
     @Published private(set) var flashUntil: Date?
 
     private var endDate: Date?
+    private var startDate: Date?   // 正计时用
     private var timer: Timer?
 
     private init() {
@@ -34,6 +35,7 @@ final class Pomodoro: ObservableObject {
         case .focus: return "专注"
         case .rest: return "休息"
         case .countdown: return "倒计时"
+        case .stopwatch: return "计时"
         }
     }
 
@@ -43,16 +45,23 @@ final class Pomodoro: ObservableObject {
         case .focus: return Color(red: 1.0, green: 0.42, blue: 0.36)
         case .rest: return Color(red: 0.36, green: 0.82, blue: 0.55)
         case .countdown: return Color(red: 0.47, green: 0.67, blue: 1.0)
+        case .stopwatch: return Color(red: 0.78, green: 0.58, blue: 1.0)
         }
     }
 
     var timeText: String {
-        let secs = phase == .idle ? focusMinutes * 60 : Int(remaining.rounded(.up))
+        let secs = phase == .idle ? focusMinutes * 60 : (phase == .stopwatch ? Int(remaining) : Int(remaining.rounded(.up)))
         let h = secs / 3600, m = (secs % 3600) / 60, s = secs % 60
         return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%02d:%02d", m, s)
     }
 
-    var progress: Double { phase == .idle ? 0 : 1 - remaining / max(total, 1) }
+    var progress: Double {
+        switch phase {
+        case .idle: return 0
+        case .stopwatch: return remaining.truncatingRemainder(dividingBy: 60) / 60   // 每分钟转一圈
+        default: return 1 - remaining / max(total, 1)
+        }
+    }
 
     var primaryActionTitle: String {
         running ? "暂停" : (phase == .idle ? "开始专注" : "继续")
@@ -67,6 +76,13 @@ final class Pomodoro: ObservableObject {
     func startRest() { begin(.rest, minutes: breakMinutes) }
     func startCountdown(minutes: Int) { begin(.countdown, minutes: minutes) }
 
+    /// 正计时（秒表），从 0 往上数
+    func startStopwatch() {
+        prepare(.stopwatch, minutes: 0)
+        remaining = 0
+        resume()
+    }
+
     func setPreset(focus: Int, rest: Int) {
         UserDefaults.standard.set(focus, forKey: Pref.pomoFocus)
         UserDefaults.standard.set(rest, forKey: Pref.pomoBreak)
@@ -77,13 +93,21 @@ final class Pomodoro: ObservableObject {
         guard running else { return }
         running = false
         timer?.invalidate()
-        if let e = endDate { remaining = max(0, e.timeIntervalSinceNow) }
+        if phase == .stopwatch, let st = startDate {
+            remaining = Date().timeIntervalSince(st)
+        } else if let e = endDate {
+            remaining = max(0, e.timeIntervalSinceNow)
+        }
     }
 
     func resume() {
         guard phase != .idle else { return }
         running = true
-        endDate = Date().addingTimeInterval(remaining)
+        if phase == .stopwatch {
+            startDate = Date().addingTimeInterval(-remaining)
+        } else {
+            endDate = Date().addingTimeInterval(remaining)
+        }
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.tick() }
     }
@@ -115,6 +139,36 @@ final class Pomodoro: ObservableObject {
         }
     }
 
+    static let countdownPresets = [5, 10, 15, 25, 30, 45, 60]
+
+    /// 在鼠标位置弹出模式菜单
+    func popUpMenu() {
+        let menu = NSMenu()
+        if phase != .idle {
+            menu.addItem(ActionItem(running ? "暂停" : "继续") { [weak self] in self?.toggle() })
+            if phase == .focus || phase == .rest { menu.addItem(ActionItem("跳过这一轮") { [weak self] in self?.skip() }) }
+            menu.addItem(ActionItem("停止") { [weak self] in self?.reset() })
+            menu.addItem(.separator())
+        }
+        menu.addItem(ActionItem("番茄钟（\(focusMinutes) / \(breakMinutes) 分钟）") { [weak self] in self?.startFocus() })
+        menu.addItem(ActionItem("正计时") { [weak self] in self?.startStopwatch() })
+        let cd = NSMenuItem(title: "倒计时", action: nil, keyEquivalent: "")
+        let sub = NSMenu()
+        for m in Self.countdownPresets {
+            sub.addItem(ActionItem("\(m) 分钟") { [weak self] in self?.startCountdown(minutes: m) })
+        }
+        sub.addItem(.separator())
+        sub.addItem(ActionItem("自定义…") { [weak self] in self?.askCustomMinutes() })
+        cd.submenu = sub
+        menu.addItem(cd)
+        menu.addItem(.separator())
+        let count = NSMenuItem(title: "今日已完成 \(completedToday) 个番茄", action: nil, keyEquivalent: "")
+        count.isEnabled = false
+        menu.addItem(count)
+        menu.addItem(ActionItem("番茄钟设置…") { SettingsWindow.show(.pomodoro) })
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+    }
+
     // MARK: 内部
     private func begin(_ p: Phase, minutes: Int) {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
@@ -131,6 +185,10 @@ final class Pomodoro: ObservableObject {
     }
 
     private func tick() {
+        if phase == .stopwatch {
+            if let st = startDate { remaining = Date().timeIntervalSince(st) }
+            return
+        }
         guard let e = endDate else { return }
         remaining = max(0, e.timeIntervalSinceNow)
         if remaining <= 0 { finish(notify: true) }
@@ -152,7 +210,7 @@ final class Pomodoro: ObservableObject {
         switch ended {
         case .focus: auto ? startRest() : prepare(.rest, minutes: breakMinutes)
         case .rest: auto ? startFocus() : prepare(.focus, minutes: focusMinutes)
-        case .countdown, .idle: reset()
+        case .countdown, .stopwatch, .idle: reset()
         }
     }
 
@@ -183,21 +241,31 @@ struct PomodoroWidget: View {
         }
         .modifier(WidgetText())
         .contentShape(Rectangle())
-        .onTapGesture { pomo.toggle() }
+        .onTapGesture {
+            // 没在跑时点一下弹出模式菜单；在跑时点一下暂停 / 继续
+            if pomo.phase == .idle { pomo.popUpMenu() } else { pomo.toggle() }
+        }
         .contextMenu {
-            Button(pomo.primaryActionTitle) { pomo.toggle() }
             if pomo.phase != .idle {
-                Button("跳过") { pomo.skip() }
-                Button("重置") { pomo.reset() }
+                Button(pomo.running ? "暂停" : "继续") { pomo.toggle() }
+                if pomo.phase == .focus || pomo.phase == .rest { Button("跳过这一轮") { pomo.skip() } }
+                Button("停止") { pomo.reset() }
+                Divider()
+            }
+            Button("番茄钟（\(pomo.focusMinutes) / \(pomo.breakMinutes) 分钟）") { pomo.startFocus() }
+            Button("正计时") { pomo.startStopwatch() }
+            Menu("倒计时") {
+                ForEach(Pomodoro.countdownPresets, id: \.self) { m in
+                    Button("\(m) 分钟") { pomo.startCountdown(minutes: m) }
+                }
+                Divider()
+                Button("自定义…") { pomo.askCustomMinutes() }
             }
             Divider()
-            Button("25 / 5 分钟") { pomo.setPreset(focus: 25, rest: 5) }
-            Button("50 / 10 分钟") { pomo.setPreset(focus: 50, rest: 10) }
-            Button("自定义倒计时…") { pomo.askCustomMinutes() }
-            Divider()
             Text("今日已完成 \(pomo.completedToday) 个番茄")
+            Button("番茄钟设置…") { SettingsWindow.show(.pomodoro) }
         }
-        .help("点击开始 / 暂停，右键更多")
+        .help("点击选择模式或暂停 / 继续，右键更多")
     }
 
     @ViewBuilder
@@ -223,4 +291,19 @@ struct PomodoroWidget: View {
             }
         }
     }
+}
+
+/// 带闭包的菜单项
+final class ActionItem: NSMenuItem {
+    private let handler: () -> Void
+
+    init(_ title: String, _ handler: @escaping () -> Void) {
+        self.handler = handler
+        super.init(title: title, action: #selector(run), keyEquivalent: "")
+        target = self
+    }
+
+    required init(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    @objc private func run() { handler() }
 }
