@@ -256,7 +256,7 @@ struct SideView: View {
                 // 系统材质比 Dock 浅，压暗一点对上 Dock 的颜色（深色模式少压一些）
                 Color.black.opacity(glassTint * (scheme == .dark ? 0.4 : 1))
             }
-            .clipShape(MergedShape(dockEdge: edge, radius: r, cover: 0.5), style: FillStyle(eoFill: true))
+            .clipShape(MergedShape(dockEdge: edge, radius: r, cover: 2), style: FillStyle(eoFill: true))
         )
     }
 
