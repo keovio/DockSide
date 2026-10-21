@@ -38,7 +38,7 @@ struct DateWidget: View {
             if compact {
                 VStack(spacing: size * 0.1) {
                     Text(formatDate("M/d", ctx.date)).font(.system(size: size * 0.85, weight: .semibold, design: .rounded))
-                    Text(formatDate("EEE", ctx.date)).font(.system(size: size * 0.7)).opacity(0.8)
+                    Text(formatDate("EEE", ctx.date)).font(.system(size: size * 0.8)).opacity(0.85)
                 }
             } else {
                 Text(formatDate("M月d日 EEEE", ctx.date))
