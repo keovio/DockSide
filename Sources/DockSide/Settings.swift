@@ -8,6 +8,7 @@ enum Pref {
     static let clockSeconds = "clockSeconds"
     static let clock24h     = "clock24h"
     static let todoMaxChars = "todoMaxChars"
+    static let todoTitleChars = "todoTitleChars"
     static let todoHover    = "todoHover"
     static let todoSound    = "todoSound"
     static let todoAutoClear = "todoAutoClear"
@@ -24,7 +25,7 @@ enum Pref {
         UserDefaults.standard.register(defaults: [
             style: "merged", fontScale: 1.0,
             clockSeconds: true, clock24h: true,
-            todoMaxChars: 20, todoHover: true, todoSound: true, todoAutoClear: true,
+            todoMaxChars: 20, todoTitleChars: 6, todoHover: true, todoSound: true, todoAutoClear: true,
             pomoFocus: 25, pomoBreak: 5, pomoSound: true, pomoAutoNext: true,
             alignTop: 0.0, alignBottom: 0.0, dockGap: 4.0, glassTint: 0.3,
         ])
