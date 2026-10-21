@@ -338,7 +338,8 @@ struct MergedShape: Shape {
         case .top:      dockRect = CGRect(x: rect.minX, y: rect.minY - big, width: rect.width, height: big + r - c)
         case .bottom:   dockRect = CGRect(x: rect.minX, y: rect.maxY - r + c, width: rect.width, height: big + r)
         }
-        if r > 0 { p.addRoundedRect(in: dockRect, cornerSize: CGSize(width: r, height: r), style: .continuous) }
+        // 实测 Dock 的圆角是正圆弧（半径约 13pt），不是"连续曲率"圆角；用 .continuous 会在角上露出缝
+        if r > 0 { p.addRoundedRect(in: dockRect, cornerSize: CGSize(width: r, height: r), style: .circular) }
         return p
     }
 }
