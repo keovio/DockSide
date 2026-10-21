@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  issues: write
 
 jobs:
   build:
@@ -15,7 +16,17 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build app (universal)
-        run: UNIVERSAL=1 bash build.sh
+        run: |
+          set -o pipefail
+          UNIVERSAL=1 bash build.sh 2>&1 | tee build.log
+
+      - name: Report build errors
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          { echo '```'; grep -E "error:|warning: .*will be an error" build.log | head -60; echo; tail -40 build.log; echo '```'; } > report.md
+          gh issue create --title "构建失败 #${{ github.run_number }}" --body-file report.md
 
       - name: Zip app
         run: cd build && ditto -c -k --keepParent DockSide.app DockSide.zip
@@ -27,5 +38,5 @@ jobs:
           TAG="build-${{ github.run_number }}"
           gh release create "$TAG" build/DockSide.zip \
             --title "DockSide $TAG" \
-            --notes "解压后把 DockSide.app 拖进「应用程序」。首次打开若提示无法验证开发者：右键 DockSide.app › 打开。然后在「系统设置 › 隐私与安全性 › 辅助功能」允许 DockSide。" \
+            --notes "解压后把 DockSide.app 拖进「应用程序」。首次打开若被拦截，在终端运行 xattr -cr /Applications/DockSide.app。然后在「系统设置 › 隐私与安全性 › 辅助功能」允许 DockSide。" \
             --latest
