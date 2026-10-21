@@ -1,0 +1,31 @@
+name: Build DockSide.app
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build app (universal)
+        run: UNIVERSAL=1 bash build.sh
+
+      - name: Zip app
+        run: cd build && ditto -c -k --keepParent DockSide.app DockSide.zip
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="build-${{ github.run_number }}"
+          gh release create "$TAG" build/DockSide.zip \
+            --title "DockSide $TAG" \
+            --notes "解压后把 DockSide.app 拖进「应用程序」。首次打开若提示无法验证开发者：右键 DockSide.app › 打开。然后在「系统设置 › 隐私与安全性 › 辅助功能」允许 DockSide。" \
+            --latest
