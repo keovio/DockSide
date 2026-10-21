@@ -14,6 +14,9 @@ enum Pref {
     static let pomoBreak    = "pomoBreak"
     static let pomoSound    = "pomoSound"
     static let pomoAutoNext = "pomoAutoNext"
+    static let alignTop     = "alignTop"      // 贴合 Dock 微调（pt），正数 = 往上
+    static let alignBottom  = "alignBottom"
+    static let dockGap      = "dockGap"
 
     static func register() {
         UserDefaults.standard.register(defaults: [
@@ -21,6 +24,7 @@ enum Pref {
             clockSeconds: true, clock24h: true,
             todoMaxChars: 20, todoHover: true, todoSound: true, todoAutoClear: true,
             pomoFocus: 25, pomoBreak: 5, pomoSound: true, pomoAutoNext: true,
+            alignTop: 0.0, alignBottom: 0.0, dockGap: 4.0,
         ])
     }
 }
