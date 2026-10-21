@@ -39,9 +39,10 @@ enum DockLocator {
         guard let first = items.first else { return cocoa(listFrame) }
         let union = items.dropFirst().reduce(first) { $0.union($1) }
         let vertical = listFrame.height > listFrame.width
+        // 实测玻璃底两端比图标列表各宽出约 3.4pt
         let bg = vertical
-            ? CGRect(x: union.minX, y: listFrame.minY, width: union.width, height: listFrame.height)
-            : CGRect(x: listFrame.minX, y: union.minY, width: listFrame.width, height: union.height)
+            ? CGRect(x: union.minX, y: listFrame.minY - 3.4, width: union.width, height: listFrame.height + 6.8)
+            : CGRect(x: listFrame.minX - 3.4, y: union.minY, width: listFrame.width + 6.8, height: union.height)
         return cocoa(bg)
     }
 
