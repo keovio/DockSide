@@ -18,7 +18,14 @@
 - 「退出 DockSide」
 
 ## 内置组件
-时钟、日期、CPU、内存、电量
+时钟、日期、CPU、内存、电量、待办
+
+## 待办
+- Dock 旁胶囊显示下一条未完成待办：点圆圈完成，点文字打开清单窗口
+- 菜单栏「待办清单…」（⌘T）可添加、编辑、拖动排序、删除
+- 导入：txt / md / csv 文件或剪贴板，每行一条，支持 `- [ ]` / `- [x]` 勾选框和列表符号，自动跳过重复
+- 导出为 Markdown 勾选清单，可再导入
+- 数据保存在 `~/Library/Application Support/DockSide/todos.json`
 
 ## 添加新组件
 在 `Sources/DockSide/Widgets.swift` 的 `allWidgets` 里加一行：
