@@ -53,8 +53,8 @@ extension View {
         background {
             ZStack {
                 shape.fill(.ultraThinMaterial)
-                shape.fill(Color.black.opacity(0.28))
-                shape.strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
+                shape.fill(Color.black.opacity(0.14))
+                shape.strokeBorder(Color.white.opacity(0.14), lineWidth: 0.5)
             }
         }
     }
@@ -104,7 +104,7 @@ struct SideView: View {
     var body: some View {
         GeometryReader { geo in
             let vertical = dock.vertical
-            let base = vertical ? geo.size.width * 0.2 : geo.size.height * 0.26
+            let base = vertical ? geo.size.width * 0.2 : geo.size.height * 0.24
             let fontSize = max(9, base * fontScale)
             let all = (store.selected[side] ?? []).filter { widgetDef($0) != nil }
             let ids = Array(all.prefix(limit))
@@ -156,7 +156,7 @@ struct SideView: View {
             }
             .padding(vertical ? .vertical : .horizontal, size * 0.4)
             .frame(width: vertical ? cross : nil, height: vertical ? nil : cross)   // 粗细和 Dock 一样
-            .glass(RoundedRectangle(cornerRadius: vertical ? size * 0.9 : size * 3, style: .continuous))
+            .glass(RoundedRectangle(cornerRadius: cross * 0.36, style: .continuous))   // 和 Dock 一样的圆角
         } else {
             // 分开的胶囊
             let layout = vertical ? AnyLayout(VStackLayout(spacing: size * 0.4)) : AnyLayout(HStackLayout(spacing: size * 0.5))
@@ -166,7 +166,7 @@ struct SideView: View {
                         .padding(.horizontal, size * (vertical ? 0.45 : 0.8))
                         .padding(.vertical, size * 0.45)
                         .frame(width: vertical ? cross : nil, height: vertical ? nil : cross)
-                        .glass(RoundedRectangle(cornerRadius: vertical ? size * 0.9 : size * 3, style: .continuous))
+                        .glass(RoundedRectangle(cornerRadius: cross * 0.36, style: .continuous))   // 和 Dock 一样的圆角
                 }
             }
         }
