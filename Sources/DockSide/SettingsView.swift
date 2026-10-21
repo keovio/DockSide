@@ -281,6 +281,8 @@ struct AboutPane: View {
             Text("版本 \(version)").foregroundStyle(.secondary)
             Text("把 Dock 栏两侧的空白变成小组件").foregroundStyle(.secondary)
             Link("GitHub 项目主页", destination: URL(string: "https://github.com/keovio/DockSide")!)
+            Button("复制 Dock 诊断信息") { DockDiagnostics.copyToClipboard() }
+                .padding(.top, 8)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
