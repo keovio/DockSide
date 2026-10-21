@@ -91,7 +91,11 @@ struct ProgressRing<Label: View>: View {
 
 private struct ContentSizeKey: PreferenceKey {
     static let defaultValue: CGSize = .zero
-    static func reduce(value: inout CGSize, nextValue: () -> CGSize) { value = nextValue() }
+    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
+        // 同级的分隔线、留白会带来默认的 0，不能把真正的尺寸覆盖掉
+        let n = nextValue()
+        if n != .zero { value = n }
+    }
 }
 
 // MARK: - 一侧的组件排布
