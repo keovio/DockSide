@@ -31,14 +31,38 @@ enum DockLocator {
     }
 }
 
+let dockSideLevel = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)) + 1)
+
 /// Dock 两侧的透明悬浮窗
 func makeSidePanel<V: View>(_ view: V) -> NSPanel {
     let p = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
     p.isOpaque = false
     p.backgroundColor = .clear
     p.hasShadow = false
-    p.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)) + 1)
+    p.level = dockSideLevel
     p.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
     p.contentView = NSHostingView(rootView: view)
     return p
+}
+
+/// 可以接收键盘输入的无边框面板（待办弹出层用）
+final class KeyPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+}
+
+/// 毛玻璃背景
+struct VisualEffect: NSViewRepresentable {
+    var material: NSVisualEffectView.Material = .hudWindow
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let v = NSVisualEffectView()
+        v.material = material
+        v.blendingMode = .behindWindow
+        v.state = .active
+        return v
+    }
+    func updateNSView(_ v: NSVisualEffectView, context: Context) {}
+}
+
+func openAccessibilitySettings() {
+    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
 }
