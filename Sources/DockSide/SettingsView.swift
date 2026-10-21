@@ -118,6 +118,9 @@ struct GeneralPane: View {
 struct AppearancePane: View {
     @AppStorage(Pref.style) private var style = "unified"
     @AppStorage(Pref.fontScale) private var fontScale = 1.0
+    @AppStorage(Pref.alignTop) private var alignTop = 0.0
+    @AppStorage(Pref.alignBottom) private var alignBottom = 0.0
+    @AppStorage(Pref.dockGap) private var dockGap = 4.0
 
     var body: some View {
         Form {
@@ -127,6 +130,25 @@ struct AppearancePane: View {
                     Text("分开的胶囊").tag("separate")
                 }
                 .pickerStyle(.radioGroup)
+            }
+            Section("贴合 Dock") {
+                HStack {
+                    Text("顶边")
+                    Slider(value: $alignTop, in: -15...15, step: 0.5)
+                    Text(String(format: "%+.1f", alignTop)).monospacedDigit().frame(width: 44)
+                }
+                HStack {
+                    Text("底边")
+                    Slider(value: $alignBottom, in: -15...15, step: 0.5)
+                    Text(String(format: "%+.1f", alignBottom)).monospacedDigit().frame(width: 44)
+                }
+                HStack {
+                    Text("和 Dock 的间距")
+                    Slider(value: $dockGap, in: 0...20, step: 1)
+                    Text("\(Int(dockGap))").monospacedDigit().frame(width: 44)
+                }
+                Text("默认会自动对齐 Dock 的玻璃底；如果在你的 Mac 上差一点，拖动这里微调，正数往上。").font(.caption).foregroundStyle(.secondary)
+                Button("恢复默认") { alignTop = 0; alignBottom = 0; dockGap = 4 }
             }
             Section("字号") {
                 HStack {
