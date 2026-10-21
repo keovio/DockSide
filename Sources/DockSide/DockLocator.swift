@@ -66,3 +66,78 @@ struct VisualEffect: NSViewRepresentable {
 func openAccessibilitySettings() {
     NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
 }
+
+// MARK: - 诊断：把系统能拿到的 Dock 几何信息全部列出来，用来精确对齐
+enum DockDiagnostics {
+    static func report() -> String {
+        var out: [String] = []
+        func r(_ v: CGRect) -> String { String(format: "x=%.1f y=%.1f w=%.1f h=%.1f", v.minX, v.minY, v.width, v.height) }
+
+        for (i, s) in NSScreen.screens.enumerated() {
+            out.append("screen\(i) frame \(r(s.frame)) visible \(r(s.visibleFrame)) scale \(s.backingScaleFactor)")
+        }
+        let dockDefaults = UserDefaults(suiteName: "com.apple.dock")
+        out.append("dock prefs: orientation=\(dockDefaults?.string(forKey: "orientation") ?? "-") tilesize=\(dockDefaults?.object(forKey: "tilesize") ?? "-") magnification=\(dockDefaults?.object(forKey: "magnification") ?? "-") autohide=\(dockDefaults?.object(forKey: "autohide") ?? "-")")
+        out.append("macOS \(ProcessInfo.processInfo.operatingSystemVersionString)")
+
+        // 辅助功能：Dock 的所有顶层元素和图标
+        if let dock = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first {
+            let app = AXUIElementCreateApplication(dock.processIdentifier)
+            var children: CFTypeRef?
+            AXUIElementCopyAttributeValue(app, kAXChildrenAttribute as CFString, &children)
+            for el in (children as? [AXUIElement]) ?? [] {
+                out.append("AX \(attr(el, kAXRoleAttribute) ?? "?") \(axFrame(el).map(r) ?? "-")")
+                var items: CFTypeRef?
+                AXUIElementCopyAttributeValue(el, kAXChildrenAttribute as CFString, &items)
+                let list = (items as? [AXUIElement]) ?? []
+                for (j, it) in list.enumerated() where j < 2 || j >= list.count - 2 {
+                    out.append("   item\(j) \(attr(it, kAXSubroleAttribute) ?? "") \(attr(it, kAXTitleAttribute) ?? "") \(axFrame(it).map(r) ?? "-")")
+                }
+                out.append("   (\(list.count) items)")
+            }
+        } else {
+            out.append("Dock 进程未找到")
+        }
+
+        // 窗口服务器：Dock 进程拥有的窗口
+        if let infos = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] {
+            for w in infos where (w[kCGWindowOwnerName as String] as? String) == "Dock" {
+                let b = w[kCGWindowBounds as String] as? [String: CGFloat] ?? [:]
+                out.append(String(format: "CGWindow layer=%@ name=%@ onscreen=%@ alpha=%@ x=%.1f y=%.1f w=%.1f h=%.1f",
+                                  "\(w[kCGWindowLayer as String] ?? "-")", "\(w[kCGWindowName as String] ?? "")",
+                                  "\(w[kCGWindowIsOnscreen as String] ?? "-")", "\(w[kCGWindowAlpha as String] ?? "-")",
+                                  b["X"] ?? -1, b["Y"] ?? -1, b["Width"] ?? -1, b["Height"] ?? -1))
+            }
+        }
+        if let f = DockLocator.iconsFrame() { out.append("iconsFrame(cocoa) \(r(f))") }
+        return out.joined(separator: "\n")
+    }
+
+    private static func attr(_ el: AXUIElement, _ key: String) -> String? {
+        var v: CFTypeRef?
+        AXUIElementCopyAttributeValue(el, key as CFString, &v)
+        return v as? String
+    }
+
+    /// AX 原始坐标（左上原点）
+    private static func axFrame(_ el: AXUIElement) -> CGRect? {
+        var p: CFTypeRef?, s: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(el, kAXPositionAttribute as CFString, &p) == .success,
+              AXUIElementCopyAttributeValue(el, kAXSizeAttribute as CFString, &s) == .success,
+              let pv = p, let sv = s else { return nil }
+        var pos = CGPoint.zero, size = CGSize.zero
+        AXValueGetValue(pv as! AXValue, .cgPoint, &pos)
+        AXValueGetValue(sv as! AXValue, .cgSize, &size)
+        return CGRect(origin: pos, size: size)
+    }
+
+    static func copyToClipboard() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(report(), forType: .string)
+        NSApp.activate(ignoringOtherApps: true)
+        let a = NSAlert()
+        a.messageText = "Dock 诊断信息已复制"
+        a.informativeText = "直接粘贴发过来就行。"
+        a.runModal()
+    }
+}
