@@ -45,10 +45,14 @@ final class Lyrics: ObservableObject {
         guard !title.isEmpty else { status = .idle; return }
         status = .loading
 
-        let file = cacheDir.appendingPathComponent("v2-" + Self.hash(key) + ".txt")
+        let file = cacheDir.appendingPathComponent("v3-" + Self.hash(key) + ".txt")
         if let cached = try? String(contentsOf: file, encoding: .utf8) {
-            apply(cached, key: key)
-            return
+            // 没找到的结果只记一天，之后再重新查
+            let age = (try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate).map { Date().timeIntervalSince($0) } ?? 0
+            if !cached.isEmpty || age < 86400 {
+                apply(cached, key: key)
+                return
+            }
         }
         Task {
             let text = await Self.fetch(title: title, artist: artist, duration: duration) ?? ""
@@ -73,48 +77,124 @@ final class Lyrics: ObservableObject {
     // MARK: 网络
     private static func fetch(title: String, artist: String, duration: Double) async -> String? {
         let chinese = (title + artist).unicodeScalars.contains { (0x4E00...0x9FFF).contains($0.value) }
-        if chinese {
-            if let t = await netease(title: title, artist: artist, duration: duration) { return t }
-            return await lrclib(title: title, artist: artist, duration: duration)
+        let order: [(String, String, Double) async -> String?] = chinese
+            ? [qq, netease, lrclib]
+            : [lrclib, qq, netease]
+        for source in order {
+            if let t = await source(title, artist, duration) { return t }
         }
-        if let t = await lrclib(title: title, artist: artist, duration: duration) { return t }
-        return await netease(title: title, artist: artist, duration: duration)
+        // 换成去掉括号后缀（Live、DJ 版、伴奏…）的歌名再试一遍
+        let clean = cleanTitle(title)
+        if clean != title {
+            for source in order { if let t = await source(clean, artist, duration) { return t } }
+        }
+        return nil
     }
 
-    /// 网易云（非官方公开接口，可能随时变化；失败就当没找到）
-    private static func netease(title: String, artist: String, duration: Double) async -> String? {
-        var c = URLComponents(string: "https://music.163.com/api/search/get")!
-        c.queryItems = [URLQueryItem(name: "s", value: artist.isEmpty ? title : "\(title) \(artist)"),
-                        URLQueryItem(name: "type", value: "1"), URLQueryItem(name: "limit", value: "10")]
-        guard let obj = await json(c.url!, referer: "https://music.163.com") as? [String: Any],
-              let result = obj["result"] as? [String: Any],
-              let songs = result["songs"] as? [[String: Any]] else { return nil }
+    // MARK: 匹配
+    private struct Candidate { let id: String; let name: String; let artists: [String]; let duration: Double }
 
-        func norm(_ s: String) -> String { s.lowercased().replacingOccurrences(of: " ", with: "") }
-        let wantTitle = norm(title), wantArtists = artist.components(separatedBy: CharacterSet(charactersIn: ",&/、")).map(norm).filter { !$0.isEmpty }
-        // 打分：歌手对上最重要，其次歌名完全一致，再看时长差
-        let scored: [(id: Int, score: Double)] = songs.compactMap { song in
-            guard let id = song["id"] as? Int, let name = song["name"] as? String else { return nil }
-            let artists = (song["artists"] as? [[String: Any]] ?? []).compactMap { $0["name"] as? String }.map(norm)
-            let artistHit = wantArtists.isEmpty || wantArtists.contains { w in artists.contains { $0.contains(w) || w.contains($0) } }
-            let titleExact = norm(name) == wantTitle
-            let dur = (song["duration"] as? Double ?? 0) / 1000
-            let durOK = duration <= 0 || dur <= 0 || abs(dur - duration) < 4
-            guard artistHit || (titleExact && durOK && duration > 0) else { return nil }
+    private static func norm(_ s: String) -> String {
+        s.lowercased().filter { !$0.isWhitespace && !"·・.-_'’\"".contains($0) }
+    }
+
+    /// 去掉 (Live)、（DJ版）、【伴奏】、- 副标题、feat. 等后缀
+    static func cleanTitle(_ t: String) -> String {
+        var s = t
+        for pattern in ["\\s*[\\(（\\[【].*?[\\)）\\]】]", "\\s+-\\s+.*$", "\\s+(feat|ft)\\..*$"] {
+            s = s.replacingOccurrences(of: pattern, with: "", options: [.regularExpression, .caseInsensitive])
+        }
+        s = s.trimmingCharacters(in: .whitespaces)
+        return s.isEmpty ? t : s
+    }
+
+    private static func splitArtists(_ a: String) -> [String] {
+        a.replacingOccurrences(of: " feat. ", with: "/").replacingOccurrences(of: " x ", with: "/")
+            .components(separatedBy: CharacterSet(charactersIn: ",&/、，;；"))
+            .map(norm).filter { !$0.isEmpty }
+    }
+
+    /// 打分挑最像的几首：歌手对上最重要，其次歌名一致，再看时长；都不像就不要，宁缺毋滥
+    private static func pick(_ list: [Candidate], title: String, artist: String, duration: Double) -> [String] {
+        let wantTitle = norm(title), wantClean = norm(cleanTitle(title))
+        let wantArtists = splitArtists(artist)
+        let scored: [(String, Double)] = list.compactMap { c in
+            let name = norm(c.name), nameClean = norm(cleanTitle(c.name))
+            let artists = c.artists.map(norm)
+            let artistHit = !wantArtists.isEmpty && wantArtists.contains { w in artists.contains { $0.contains(w) || w.contains($0) } }
+            let titleExact = name == wantTitle || nameClean == wantClean
+            let titleNear = titleExact || name.hasPrefix(wantClean) || wantTitle.hasPrefix(nameClean)
+            let durDiff = (duration > 0 && c.duration > 0) ? abs(c.duration - duration) : -1
+            let durOK = durDiff >= 0 && durDiff < 4
+            guard (artistHit && titleNear) || (titleExact && (durOK || wantArtists.isEmpty)) else { return nil }
             var score = 0.0
             if artistHit { score += 100 }
-            if titleExact { score += 50 } else if norm(name).hasPrefix(wantTitle) { score += 20 }
-            if duration > 0 && dur > 0 { score -= abs(dur - duration) }
-            return (id, score)
+            if titleExact { score += 50 } else if titleNear { score += 20 }
+            if durDiff >= 0 { score -= min(durDiff, 40) }
+            return (c.id, score)
         }
-        for cand in scored.sorted(by: { $0.score > $1.score }).prefix(3) {
+        return scored.sorted { $0.1 > $1.1 }.prefix(3).map(\.0)
+    }
+
+    private static func query(_ title: String, _ artist: String) -> String {
+        let first = artist.components(separatedBy: CharacterSet(charactersIn: ",&/、，")).first?.trimmingCharacters(in: .whitespaces) ?? ""
+        return first.isEmpty ? title : "\(title) \(first)"
+    }
+
+    private static func valid(_ lrc: String?) -> String? {
+        guard let lrc, !lrc.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        if lrc.contains("纯音乐，请欣赏") { return nil }
+        return lrc
+    }
+
+    // MARK: QQ 音乐（非官方公开接口，中文曲库最全）
+    private static func qq(title: String, artist: String, duration: Double) async -> String? {
+        var c = URLComponents(string: "https://c.y.qq.com/soso/fcgi-bin/client_search_cp")!
+        c.queryItems = [URLQueryItem(name: "w", value: query(title, artist)), URLQueryItem(name: "format", value: "json"),
+                        URLQueryItem(name: "n", value: "10"), URLQueryItem(name: "p", value: "1")]
+        guard let obj = await json(c.url!, referer: "https://y.qq.com") as? [String: Any],
+              let list = ((obj["data"] as? [String: Any])?["song"] as? [String: Any])?["list"] as? [[String: Any]] else { return nil }
+        let cands = list.compactMap { s -> Candidate? in
+            guard let mid = s["songmid"] as? String, let name = s["songname"] as? String else { return nil }
+            let singers = (s["singer"] as? [[String: Any]] ?? []).compactMap { $0["name"] as? String }
+            return Candidate(id: mid, name: name, artists: singers, duration: (s["interval"] as? Double) ?? 0)
+        }
+        for mid in pick(cands, title: title, artist: artist, duration: duration) {
+            var l = URLComponents(string: "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg")!
+            l.queryItems = [URLQueryItem(name: "songmid", value: mid), URLQueryItem(name: "format", value: "json"),
+                            URLQueryItem(name: "nobase64", value: "1")]
+            if let o = await json(l.url!, referer: "https://y.qq.com") as? [String: Any],
+               let lrc = valid((o["lyric"] as? String).map(decodeEntities)) { return lrc }
+        }
+        return nil
+    }
+
+    private static func decodeEntities(_ s: String) -> String {
+        var r = s
+        for (k, v) in ["&apos;": "'", "&quot;": "\"", "&lt;": "<", "&gt;": ">", "&#58;": ":", "&#32;": " ", "&#10;": "\n",
+                       "&#13;": "", "&#40;": "(", "&#41;": ")", "&#45;": "-", "&#46;": ".", "&#39;": "'", "&amp;": "&"] {
+            r = r.replacingOccurrences(of: k, with: v)
+        }
+        return r
+    }
+
+    // MARK: 网易云（非官方公开接口）
+    private static func netease(title: String, artist: String, duration: Double) async -> String? {
+        var c = URLComponents(string: "https://music.163.com/api/search/get")!
+        c.queryItems = [URLQueryItem(name: "s", value: query(title, artist)),
+                        URLQueryItem(name: "type", value: "1"), URLQueryItem(name: "limit", value: "10")]
+        guard let obj = await json(c.url!, referer: "https://music.163.com") as? [String: Any],
+              let songs = (obj["result"] as? [String: Any])?["songs"] as? [[String: Any]] else { return nil }
+        let cands = songs.compactMap { s -> Candidate? in
+            guard let id = s["id"] as? Int, let name = s["name"] as? String else { return nil }
+            let artists = (s["artists"] as? [[String: Any]] ?? []).compactMap { $0["name"] as? String }
+            return Candidate(id: String(id), name: name, artists: artists, duration: (s["duration"] as? Double ?? 0) / 1000)
+        }
+        for id in pick(cands, title: title, artist: artist, duration: duration) {
             var l = URLComponents(string: "https://music.163.com/api/song/lyric")!
-            l.queryItems = [URLQueryItem(name: "id", value: String(cand.id)), URLQueryItem(name: "lv", value: "1"), URLQueryItem(name: "tv", value: "-1")]
+            l.queryItems = [URLQueryItem(name: "id", value: id), URLQueryItem(name: "lv", value: "1"), URLQueryItem(name: "tv", value: "-1")]
             if let o = await json(l.url!, referer: "https://music.163.com") as? [String: Any],
-               let lrc = (o["lrc"] as? [String: Any])?["lyric"] as? String,
-               !lrc.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                return lrc
-            }
+               let lrc = valid((o["lrc"] as? [String: Any])?["lyric"] as? String) { return lrc }
         }
         return nil
     }
