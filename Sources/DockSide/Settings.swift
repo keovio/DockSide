@@ -27,7 +27,7 @@ enum Pref {
             clockSeconds: true, clock24h: true,
             todoMaxChars: 20, todoTitleChars: 6, todoHover: true, todoSound: true, todoAutoClear: true,
             pomoFocus: 25, pomoBreak: 5, pomoSound: true, pomoAutoNext: true,
-            alignTop: 0.0, alignBottom: 0.0, dockGap: 4.0, glassTint: 0.3,
+            alignTop: 0.0, alignBottom: 0.0, dockGap: 4.0, glassTint: 0.38,
         ])
     }
 }
