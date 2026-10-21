@@ -63,6 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(item("设置…", #selector(openSettings), ","))
         menu.addItem(item("检查更新…", #selector(checkUpdates)))
         menu.addItem(item("使用帮助", #selector(openHelp)))
+        menu.addItem(item("复制 Dock 诊断信息", #selector(copyDiag)))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "退出 DockSide", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
     }
@@ -83,6 +84,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func checkUpdates() {
         NSWorkspace.shared.open(URL(string: "https://github.com/keovio/DockSide/releases/latest")!)
     }
+    @objc private func copyDiag() { DockDiagnostics.copyToClipboard() }
     @objc private func openHelp() {
         NSWorkspace.shared.open(URL(string: "https://github.com/keovio/DockSide#readme")!)
     }
