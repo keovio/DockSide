@@ -114,7 +114,7 @@ struct SideView: View {
             let nearDock: Alignment = vertical ? (side == .left ? .bottom : .top) : (side == .left ? .trailing : .leading)
             let anchor: UnitPoint = vertical ? (side == .left ? .bottom : .top) : (side == .left ? .trailing : .leading)
 
-            row(ids: ids, vertical: vertical, size: fontSize)
+            row(ids: ids, vertical: vertical, size: fontSize, cross: vertical ? geo.size.width : geo.size.height)
                 .environment(\.widgetFontSize, fontSize)
                 .environment(\.compact, vertical)
                 .fixedSize()
@@ -137,7 +137,7 @@ struct SideView: View {
     }
 
     @ViewBuilder
-    private func row(ids: [String], vertical: Bool, size: CGFloat) -> some View {
+    private func row(ids: [String], vertical: Bool, size: CGFloat, cross: CGFloat) -> some View {
         if ids.isEmpty {
             EmptyView()
         } else if style == "unified" {
@@ -155,7 +155,7 @@ struct SideView: View {
                 }
             }
             .padding(vertical ? .vertical : .horizontal, size * 0.4)
-            .padding(vertical ? .horizontal : .vertical, size * 0.45)
+            .frame(width: vertical ? cross : nil, height: vertical ? nil : cross)   // 粗细和 Dock 一样
             .glass(RoundedRectangle(cornerRadius: vertical ? size * 0.9 : size * 3, style: .continuous))
         } else {
             // 分开的胶囊
@@ -165,6 +165,7 @@ struct SideView: View {
                     widgetDef(id)!.make()
                         .padding(.horizontal, size * (vertical ? 0.45 : 0.8))
                         .padding(.vertical, size * 0.45)
+                        .frame(width: vertical ? cross : nil, height: vertical ? nil : cross)
                         .glass(RoundedRectangle(cornerRadius: vertical ? size * 0.9 : size * 3, style: .continuous))
                 }
             }
