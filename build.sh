@@ -14,7 +14,14 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/DockSide"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
-codesign --force --deep --sign - "$APP"
+cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+
+# 固定签名要求：只认 Bundle ID，不认每次编译都会变的哈希，
+# 这样覆盖安装新版后「辅助功能」授权不会失效
+codesign --force --deep --sign - \
+    --identifier com.keovi.DockSide \
+    -r='designated => identifier "com.keovi.DockSide"' \
+    "$APP"
 
 echo "✅ 已生成 $APP"
 if [[ "${1:-}" == "--install" ]]; then
