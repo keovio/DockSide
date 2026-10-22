@@ -277,6 +277,11 @@ final class ScheduleStore: ObservableObject {
     // MARK: 读取
 
     /// 重载当前时间窗口的事件
+    ///
+    /// 【双源合并】EventKit 与本地 JSON 是「双源」，不是「二选一」：
+    /// 授权后本地导入的日程必须同样可见，否则导入功能等于失效——
+    /// 2026-10-22 线上事故就是这么来的：授权状态下 reload 只读 EventKit，
+    /// 用户导入的 312 条永远不显示，点「清空本地数据」也看不出任何变化（看起来像没反应）。
     func reload() {
         guard auth == .granted else {
             events = loadLocal()
@@ -286,6 +291,13 @@ final class ScheduleStore: ObservableObject {
         calendars = ek.calendars(for: .event).sorted { $0.title < $1.title }
         coverToday()
         loadEvents(from: loadedFrom, to: loadedTo)
+    }
+
+    /// 合并显示用：当前时间窗口内的本地 JSON 事件
+    private func localEventsInWindow() -> [CalendarEvent] {
+        let from = loadedFrom == .distantPast ? Date.distantPast : loadedFrom
+        let to = loadedTo == .distantFuture ? Date.distantFuture : loadedTo
+        return loadLocal().filter { $0.start < to && $0.end > from }
     }
 
     /// 确保 [from, to] 在已加载范围内，不够就重拉
@@ -316,6 +328,7 @@ final class ScheduleStore: ObservableObject {
 
     private func loadEvents(from: Date, to: Date) {
         guard auth == .granted, from < to else { events = []; return }
+        let localOnly = localEventsInWindow()
         let pred = ek.predicateForEvents(withStart: from, end: to, calendars: nil)
         let found = ek.events(matching: pred)
         events = found.map { ev in
@@ -332,7 +345,14 @@ final class ScheduleStore: ObservableObject {
                 occurrenceStart: ev.startDate
             )
         }
-        .sorted(by: eventSort)
+        // 双源合并：系统日历 + 本地导入的一起显示（本地事件用 ekEventID == nil 区分）
+        // 去重：同一个事件如果用户既导进本地又存在系统日历里，只显示系统日历那条，
+        // 避免列表里出现两条一模一样的（标题 + 开始时间相同即视为同一条）
+        let ekKeys = Set(events.map { "\($0.title)|\(Int($0.start.timeIntervalSince1970))" })
+        let dedupLocal = localOnly.filter {
+            !ekKeys.contains("\($0.title)|\(Int($0.start.timeIntervalSince1970))")
+        }
+        events = (events + dedupLocal).sorted(by: eventSort)
     }
 
     /// 本地 JSON 源

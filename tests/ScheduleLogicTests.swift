@@ -435,5 +435,46 @@ ok(restored.count == 2, "清空回归：备份能被解码回来（2 条）")
 try? FileManager.default.removeItem(at: clrDir)
 
 
+
+// MARK: - 线上事故回归：「清空没反应」的真正根因
+// 事故：授权状态下 reload() 只读 EventKit，完全不读本地 JSON →
+//      导入的日程永不显示；清空本地文件界面无变化 → 用户以为「按了没反应」。
+// 验收要求：EventKit 与本地 JSON 是双源，授权后两者都要显示。
+
+// ① 双源去重逻辑：同标题同开始时间只留一条
+func dedupeAgainstEK(_ ekList: [CalendarEvent], _ localList: [CalendarEvent]) -> [CalendarEvent] {
+    let keys = Set(ekList.map { "\($0.title)|\(Int($0.start.timeIntervalSince1970))" })
+    let keep = localList.filter { !keys.contains("\($0.title)|\(Int($0.start.timeIntervalSince1970))") }
+    return (ekList + keep).sorted(by: eventSort)
+}
+
+let ekEvent = ev("产品评审会", dt(2026, 10, 22, 14, 30), dt(2026, 10, 22, 15, 30), calName: "工作")
+var localDup = ev("产品评审会", dt(2026, 10, 22, 14, 30), dt(2026, 10, 22, 15, 30), calName: "本地")
+localDup.ekEventID = nil
+var localOnly2 = ev("晨会", dt(2026, 10, 22, 9, 0), dt(2026, 10, 22, 10, 0), calName: "本地")
+localOnly2.ekEventID = nil
+
+let merged2 = dedupeAgainstEK([ekEvent], [localDup, localOnly2])
+ok(merged2.count == 2, "事故回归：系统日历 1 条 + 本地独有的 1 条 = 2 条（重复的去掉）")
+ok(merged2.filter { $0.title == "产品评审会" }.count == 1, "事故回归：跨源重复事件只显示一条")
+ok(merged2.contains { $0.title == "晨会" && $0.isLocal }, "事故回归：本地独有事件必须显示（旧代码会整个吞掉）")
+
+// ② 只有本地数据、没有任何系统日历时，本地必须全显示
+let onlyLocal = [localDup, localOnly2]
+ok(dedupeAgainstEK([], onlyLocal).count == 2, "事故回归：无系统日程时本地事件全部可见")
+
+// ③ 标题相同但时间不同 → 视为两条，都保留
+var sameTitleDiff = ev("晨会", dt(2026, 10, 22, 15, 0), dt(2026, 10, 22, 16, 0), calName: "本地")
+sameTitleDiff.ekEventID = nil
+ok(dedupeAgainstEK([ekEvent], [sameTitleDiff]).count == 2, "事故回归：同标题不同时间不算重复，都保留")
+
+// ④ 本地事件的身份判定：ekEventID == nil 即本地（清空/编辑/删除都靠它分流）
+ok(localOnly2.isLocal == true, "事故回归：本地事件 isLocal == true")
+// 系统日历事件必须带 ekEventID；辅助函数 ev() 默认 ekEventID = nil（那是本地事件的标志）
+var ekMarked = ekEvent
+ekMarked.ekEventID = "EK-1234"
+ok(ekMarked.isLocal == false, "事故回归：带 ekEventID 的事件 isLocal == false（判定分流正确）")
+
+
 print("\n=== \(pass) 通过 / \(fail) 失败 ===")
 exit(fail == 0 ? 0 : 1)
