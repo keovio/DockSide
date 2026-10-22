@@ -339,8 +339,14 @@ final class ScheduleStore: ObservableObject {
     private func loadLocal() -> [CalendarEvent] {
         guard let data = try? Data(contentsOf: fileURL) else { return [] }
         guard let saved = try? JSONDecoder().decode([CalendarEvent].self, from: data) else {
-            // 文件损坏：按空数据处理，并重建一个空文件
-            try? JSONEncoder().encode([CalendarEvent]()).write(to: fileURL, options: .atomic)
+            // 解码失败：先备份原文件，再按空数据处理。
+            // 【重要】绝不能直接覆盖——曾经因为解码器读不懂 ISO8601 就写空文件，
+            // 把用户导进去的数据连锅端了（2026-10-22 线上事故）。
+            let stamp = formatDate("yyyyMMdd-HHmmss", Date())
+            let bak = fileURL.deletingLastPathComponent()
+                .appendingPathComponent("schedule.损坏备份-\(stamp).json")
+            try? data.write(to: bak, options: .atomic)
+            NSLog("[DockSide] schedule.json 解码失败，已备份到 %@", bak.path)
             return []
         }
         return saved.map { e in
@@ -502,6 +508,21 @@ enum ScheduleFilter {
             if e.isAllDay { return cal.isDate(e.start, inSameDayAs: now) || (e.start < to && e.end > from) }
             return e.start < to && e.end > from
         }
+    }
+
+    /// 周视图单列的拆分：某天要画的事件，分成「定时」和「全天」两组。
+    /// 抽取出来是为了让「计数与渲染口径一致」可被测试守住（v1.4 验收 19）。
+    static func splitForDay(_ events: [CalendarEvent], day: Date)
+        -> (timed: [CalendarEvent], allDay: [CalendarEvent]) {
+        let cal = Calendar.current
+        let dayStart = cal.startOfDay(for: day)
+        let dayEnd = dayStart.addingTimeInterval(86400)
+        let inDay = apply(events).filter { e in
+            if e.isAllDay { return e.start < dayEnd && e.end > dayStart }
+            return e.start < dayEnd && e.end > dayStart
+        }
+        return (inDay.filter { !$0.isAllDay }.sorted(by: eventSort),
+                inDay.filter { $0.isAllDay }.sorted(by: eventSort))
     }
 
     /// 胶囊态：按设置里的预读窗口，取「正在进行的」或「最近要开始的」
@@ -832,15 +853,44 @@ enum ScheduleIO {
     /// 清空本地数据（EventKit 事件不受影响）
     static func clearLocal() {
         NSApp.activate(ignoringOtherApps: true)
+        // 悬浮窗应用（LSUIElement / nonactivating panel）点按钮时 App 往往不在前台，
+        // 只靠 activate 有时仍会弹在别的窗口后面，用户看起来就是「按了没反应」。
+        // 这里强制置前再弹，并在弹之前把数量告诉用户，避免「已经是空的还弹一次」的困惑。
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        defer { NSApp.setActivationPolicy(.accessory) }
+
+        let existing = localEvents()
         let alert = NSAlert()
-        alert.messageText = "清空本地日程数据？"
-        alert.informativeText = "只清空 DockSide 自己保存的本地日程，系统「日历」里的日程不受影响。清空后不能恢复。"
+        if existing.isEmpty {
+            alert.messageText = "本地日程已经是空的"
+            alert.informativeText = "DockSide 自己保存的日程文件里没有内容，不需要清空。\n系统「日历」里的日程不受影响。"
+            alert.addButton(withTitle: "好")
+            alert.runModal()
+            return
+        }
+        alert.messageText = "清空 \(existing.count) 条本地日程？"
+        alert.informativeText = "只清空 DockSide 自己保存的本地日程，系统「日历」里的日程不受影响。\n清空前会自动备份一份，出问题能找回。"
         alert.alertStyle = .warning
         alert.addButton(withTitle: "清空")
         alert.addButton(withTitle: "取消")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        // 先备份再清空（清空是不可逆操作）
+        if let data = try? Data(contentsOf: ScheduleStore.shared.fileURL) {
+            let stamp = formatDate("yyyyMMdd-HHmmss", Date())
+            let bak = ScheduleStore.shared.fileURL.deletingLastPathComponent()
+                .appendingPathComponent("schedule.清空前备份-\(stamp).json")
+            try? data.write(to: bak, options: .atomic)
+        }
         writeLocal([])
         ScheduleStore.shared.reload()
+
+        let done = NSAlert()
+        done.messageText = "已清空"
+        done.informativeText = "本地日程已清空。原数据备份在同一个文件夹里（文件名以「schedule.清空前备份-」开头）。"
+        done.addButton(withTitle: "好")
+        done.runModal()
     }
 
     static func revealData() {
@@ -1448,12 +1498,9 @@ struct ScheduleWindowView: View {
 
     private func dayColumn(_ day: Date) -> some View {
         let isToday = cal.isDateInToday(day)
-        let dayEvents = store.events.filter { e in
-            if e.isAllDay { return cal.isDate(e.start, inSameDayAs: day) }
-            return e.start < cal.startOfDay(for: day).addingTimeInterval(86400) && e.end > cal.startOfDay(for: day)
-        }
-        let timed = dayEvents.filter { !$0.isAllDay }.sorted(by: eventSort)
-        let allDay = dayEvents.filter { $0.isAllDay }.sorted(by: eventSort)
+        let split = ScheduleFilter.splitForDay(store.events, day: day)
+        let timed = split.timed
+        let allDay = split.allDay
 
         return VStack(spacing: 0) {
             VStack(spacing: 1) {

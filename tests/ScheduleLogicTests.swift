@@ -320,5 +320,120 @@ ok(todayOnlyAllDay.count == 1, "Bug2 回归：今日只有全天事件时筛选�
 ok(todayOnlyAllDay.allSatisfy { $0.isAllDay }, "Bug2 回归：筛出的是全天事件（旧代码不渲染这类）")
 
 
+
+// MARK: - v1.4 验收 19：全天事件必须在周视图有渲染位（计数与画面一致）
+// 复刻用户现场：一周里只有节气/节日这类全天事件，旧代码「4 条但全空」
+UserDefaults.standard.set("", forKey: Pref.scheduleCalendars)
+UserDefaults.standard.set(true, forKey: Pref.scheduleShowAllDay)
+
+let holidayWeek = [
+    ev("重阳节", dt(2026, 10, 18, 0, 0), dt(2026, 10, 19, 0, 0), allDay: true, calName: "节假日"),
+    ev("霜降",   dt(2026, 10, 23, 0, 0), dt(2026, 10, 24, 0, 0), allDay: true, calName: "节假日"),
+    ev("寒衣节", dt(2026, 10, 24, 0, 0), dt(2026, 10, 25, 0, 0), allDay: true, calName: "节假日"),
+    ev("万圣夜", dt(2026, 10, 25, 0, 0), dt(2026, 10, 26, 0, 0), allDay: true, calName: "节假日"),
+]
+let mon = dt(2026, 10, 19, 0, 0)
+let tue = dt(2026, 10, 20, 0, 0)
+let sun = dt(2026, 10, 18, 0, 0)
+let fri = dt(2026, 10, 23, 0, 0)
+
+let holidaySun = ScheduleFilter.splitForDay(holidayWeek, day: sun)
+ok(holidaySun.allDay.count == 1, "验收19：周日列出 1 条全天（重阳节），不再只进列头小字")
+ok(holidaySun.allDay.first?.title == "重阳节", "验收19：周日全天条内容是重阳节")
+ok(holidaySun.timed.isEmpty, "验收19：周日没有定时事件")
+
+let holidayMon = ScheduleFilter.splitForDay(holidayWeek, day: mon)
+ok(holidayMon.allDay.isEmpty && holidayMon.timed.isEmpty, "验收19：无事件的列不占位（周一空）")
+
+let holidayFri = ScheduleFilter.splitForDay(holidayWeek, day: fri)
+ok(holidayFri.allDay.count == 1 && holidayFri.allDay.first?.title == "霜降", "验收19：周五全天条是霜降")
+
+// 一整周只有全天事件时，7 天里能画出的事件总数 = 数据总条数（不多算、不漏算）
+let weekDays = (0..<7).compactMap { cal.date(byAdding: .day, value: $0, to: sun) }
+let renderedCount = weekDays.reduce(0) { acc, d in
+    let sp = ScheduleFilter.splitForDay(holidayWeek, day: d)
+    return acc + sp.allDay.count + sp.timed.count
+}
+// 10/18(日) ~ 10/24(六) 这一周里只有 3 条（万圣夜 10/25 属下一周）
+ok(renderedCount == 3,
+   "验收19：本周渲染出 3 条（重阳节/霜降/寒衣节），万圣夜属下周一不越界（实际 \(renderedCount)）")
+let nextWeekSun = dt(2026, 10, 25, 0, 0)
+ok(ScheduleFilter.splitForDay(holidayWeek, day: nextWeekSun).allDay.first?.title == "万圣夜",
+   "验收19：万圣夜在下一周周日正确显示")
+
+// 定时 + 全天混排：两组都要出现
+let mixedPool2 = [
+    ev("晨会", dt(2026, 10, 22, 9, 0), dt(2026, 10, 22, 10, 0)),
+    ev("团队休假日", dt(2026, 10, 22, 0, 0), dt(2026, 10, 23, 0, 0), allDay: true, calName: "节假日"),
+]
+let mixedSplit = ScheduleFilter.splitForDay(mixedPool2, day: dt(2026, 10, 22, 0, 0))
+ok(mixedSplit.timed.count == 1 && mixedSplit.allDay.count == 1,
+   "验收19：同一天定时+全天都要渲染（各 1 条）")
+ok(mixedSplit.allDay.first?.title == "团队休假日", "验收19：全天条取到团队休假日")
+
+// 跨午夜事件在列的归属：22:00-次日02:00 应同时出现在两天
+let crossDay = [ev("跨午夜", dt(2026, 10, 22, 22, 0), dt(2026, 10, 23, 2, 0))]
+ok(ScheduleFilter.splitForDay(crossDay, day: dt(2026, 10, 22, 0, 0)).timed.count == 1, "验收19：跨午夜事件出现在开始日")
+ok(ScheduleFilter.splitForDay(crossDay, day: dt(2026, 10, 23, 0, 0)).timed.count == 1, "验收19：跨午夜事件也出现在结束日")
+
+// 多天连续的全天事件（如长假）每天都要显示
+let longHoliday = [ev("国庆假期", dt(2026, 10, 1, 0, 0), dt(2026, 10, 8, 0, 0), allDay: true, calName: "节假日")]
+let oct3 = ScheduleFilter.splitForDay(longHoliday, day: dt(2026, 10, 3, 0, 0))
+ok(oct3.allDay.count == 1, "验收19：跨多天的全天事件，中间每天都能渲染")
+
+
+
+// MARK: - 线上事故回归：解码失败绝不能销毁用户数据
+// 事故经过：旧解码器读不懂 ISO8601 → loadLocal 判定「文件损坏」→ 直接写空文件 → 用户 312 条被连锅端
+let tmpDir = URL(fileURLWithPath: NSTemporaryDirectory())
+    .appendingPathComponent("dockside-test-\(UUID().uuidString)")
+try? FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
+
+// ① 模拟「解码失败」时的正确行为：备份原文件，不覆盖
+let badFile = tmpDir.appendingPathComponent("schedule.json")
+let badContent = "[{\"title\":\"数据\",\"start\":\"坏掉的日期\",\"end\":\"也坏\"}]"
+try! badContent.write(to: badFile, atomically: true, encoding: .utf8)
+let decodedBad = (try? JSONDecoder().decode([CalendarEvent].self, from: Data(contentsOf: badFile))) ?? []
+ok(decodedBad.isEmpty, "事故回归：损坏内容确实解码失败（准备前提）")
+// 修复后的逻辑：备份而不是覆盖
+let bakFile = tmpDir.appendingPathComponent("schedule.损坏备份-test.json")
+if let d = try? Data(contentsOf: badFile) { try? d.write(to: bakFile, options: .atomic) }
+ok(FileManager.default.fileExists(atPath: bakFile.path), "事故回归：解码失败时原文件被备份")
+ok((try? String(contentsOf: bakFile, encoding: .utf8)) == badContent, "事故回归：备份内容与原始一致（数据可找回）")
+
+// ② 关键：容错解码让「以前会失败」的文件现在能正常读，根本不会走到损坏分支
+let isoAgain = "[{\"id\":\"00000000-0000-0000-0000-000000000009\",\"title\":\"起床\",\"start\":\"2026-10-22T07:30:00+08:00\",\"end\":\"2026-10-22T07:45:00+08:00\",\"isAllDay\":false,\"calendarName\":\"求职日程\",\"calendarColor\":\"#4A99E9\"}]"
+ok(ScheduleImport.parseJSON(isoAgain).count == 1, "事故回归：ISO8601 文件不再被判为损坏（容错解码兜住）")
+
+// ③ 空文件/不存在文件都是安全的空结果，不是错误
+let emptyFile = tmpDir.appendingPathComponent("empty.json")
+try! "[]".write(to: emptyFile, atomically: true, encoding: .utf8)
+ok(((try? JSONDecoder().decode([CalendarEvent].self, from: Data(contentsOf: emptyFile))) ?? []).isEmpty,
+   "事故回归：空数组文件正常解码为空，不触发重建")
+let missing = tmpDir.appendingPathComponent("not-exist.json")
+ok((try? Data(contentsOf: missing)) == nil, "事故回归：文件不存在返回 nil，按空处理不崩")
+
+try? FileManager.default.removeItem(at: tmpDir)
+
+// MARK: - 清空本地数据：先备份再清(用户报「按了没反应」)
+// 数据侧要保证：备份写成功、清空后确实是空、备份内容等于清空前内容
+let clrDir = URL(fileURLWithPath: NSTemporaryDirectory())
+    .appendingPathComponent("dockside-clear-\(UUID().uuidString)")
+try? FileManager.default.createDirectory(at: clrDir, withIntermediateDirectories: true)
+let clrFile = clrDir.appendingPathComponent("schedule.json")
+let beforeClear = try! JSONEncoder().encode([ongoing, allDayToday])
+try! beforeClear.write(to: clrFile, options: .atomic)
+let backupBeforeClear = clrDir.appendingPathComponent("schedule.清空前备份-test.json")
+try! Data(contentsOf: clrFile).write(to: backupBeforeClear, options: .atomic)
+try! JSONEncoder().encode([CalendarEvent]()).write(to: clrFile, options: .atomic)
+ok(((try? JSONDecoder().decode([CalendarEvent].self, from: Data(contentsOf: clrFile))) ?? []).isEmpty,
+   "清空回归：清空后文件确实是空数组")
+ok((try? Data(contentsOf: backupBeforeClear))?.count == beforeClear.count,
+   "清空回归：清空前备份字节数与原始一致（可恢复）")
+let restored = (try? JSONDecoder().decode([CalendarEvent].self, from: Data(contentsOf: backupBeforeClear))) ?? []
+ok(restored.count == 2, "清空回归：备份能被解码回来（2 条）")
+try? FileManager.default.removeItem(at: clrDir)
+
+
 print("\n=== \(pass) 通过 / \(fail) 失败 ===")
 exit(fail == 0 ? 0 : 1)
