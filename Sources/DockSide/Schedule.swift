@@ -20,6 +20,72 @@ struct CalendarEvent: Codable, Identifiable, Hashable {
     /// 系统日历里这一次发生的原始开始时间（重复日程每次发生共用同一个 ekEventID，靠它定位是哪一次）
     var occurrenceStart: Date?
 
+    // MARK: 解码（v1.4：日期容错，见规格 §5.4）
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, start, end, isAllDay, calendarName, calendarColor
+        case ekEventID, uid, occurrenceStart
+    }
+
+    init(id: UUID = UUID(), title: String, start: Date, end: Date,
+         isAllDay: Bool = false, calendarName: String = "", calendarColor: String = "",
+         ekEventID: String? = nil, uid: String? = nil, occurrenceStart: Date? = nil) {
+        self.id = id
+        self.title = title
+        self.start = start
+        self.end = end
+        self.isAllDay = isAllDay
+        self.calendarName = calendarName
+        self.calendarColor = calendarColor
+        self.ekEventID = ekEventID
+        self.uid = uid
+        self.occurrenceStart = occurrenceStart
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = (try? c.decode(UUID.self, forKey: .id)) ?? UUID()
+        title = (try? c.decode(String.self, forKey: .title)) ?? ""
+        // 日期必须能解析，否则这条算失败（交给上层统计，不再静默吞掉）
+        start = try Self.decodeDate(c, .start)
+        end = try Self.decodeDate(c, .end)
+        isAllDay = (try? c.decode(Bool.self, forKey: .isAllDay)) ?? false
+        calendarName = (try? c.decode(String.self, forKey: .calendarName)) ?? ""
+        calendarColor = (try? c.decode(String.self, forKey: .calendarColor)) ?? ""
+        ekEventID = try? c.decodeIfPresent(String.self, forKey: .ekEventID)
+        uid = try? c.decodeIfPresent(String.self, forKey: .uid)
+        occurrenceStart = try? c.decodeIfPresent(Date.self, forKey: .occurrenceStart)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(title, forKey: .title)
+        // 写出去的永远是数字时间戳（旧版本读得回来）
+        try c.encode(start, forKey: .start)
+        try c.encode(end, forKey: .end)
+        try c.encode(isAllDay, forKey: .isAllDay)
+        try c.encode(calendarName, forKey: .calendarName)
+        try c.encode(calendarColor, forKey: .calendarColor)
+        try c.encodeIfPresent(ekEventID, forKey: .ekEventID)
+        try c.encodeIfPresent(uid, forKey: .uid)
+        try c.encodeIfPresent(occurrenceStart, forKey: .occurrenceStart)
+    }
+
+    /// 日期容错解码：数字时间戳 → ISO8601 字符串 → 常见本地格式
+    private static func decodeDate(_ c: KeyedDecodingContainer<CodingKeys>,
+                                   _ key: CodingKeys) throws -> Date {
+        let sub = try c.superDecoder(forKey: key)
+        let single = try sub.singleValueContainer()
+        // 数字分支必须与系统默认 Codable 一致：Date 的默认编码基准是 2001-01-01
+        if let t = try? single.decode(Double.self) { return Date(timeIntervalSinceReferenceDate: t) }
+        guard let s = try? single.decode(String.self) else {
+            throw DecodingError.dataCorruptedError(in: single, debugDescription: "日期既不是数字也不是字符串")
+        }
+        if let d = ScheduleDateParse.parse(s) { return d }
+        throw DecodingError.dataCorruptedError(in: single, debugDescription: "无法解析的日期：\(s)")
+    }
+
     /// 由「系统日历 ID + 这次的开始时间」算出固定的 id，每分钟刷新时列表行不会被重建
     static func stableID(_ ekID: String, _ start: Date) -> UUID {
         let d = Array(SHA256.hash(data: Data("\(ekID)|\(start.timeIntervalSince1970)".utf8)))
@@ -33,6 +99,116 @@ struct CalendarEvent: Codable, Identifiable, Hashable {
     func isPast(_ now: Date) -> Bool { end <= now }
     func minutesUntilStart(_ now: Date) -> Int { Int(start.timeIntervalSince(now) / 60) }
     func minutesUntilEnd(_ now: Date) -> Int { Int(end.timeIntervalSince(now) / 60) }
+}
+
+/// 日期字符串解析（规格 v1.4 §5.4 容错口径）
+enum ScheduleDateParse {
+    /// 依次尝试：ISO8601（带/不带小数秒）→ 常见本地格式
+    static func parse(_ s: String) -> Date? {
+        let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return nil }
+
+        // 纯数字串：按 1970 时间戳理解（十几亿量级），否则按 2001 参考时间
+        if let n = Double(t) {
+            if n > 946_684_800, n < 4_102_444_800 { return Date(timeIntervalSince1970: n) }
+            if n > 0, n < 3_155_760_000 { return Date(timeIntervalSinceReferenceDate: n) }
+        }
+
+        let iso = ISO8601DateFormatter()
+        if let d = iso.date(from: t) { return d }
+        let isoFrac = ISO8601DateFormatter()
+        isoFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = isoFrac.date(from: t) { return d }
+
+        // 无时区信息的本地时间
+        let patterns = [
+            "yyyy-MM-dd'T'HH:mm:ss",
+            "yyyy-MM-dd HH:mm:ss",
+            "yyyy-MM-dd'T'HH:mm",
+            "yyyy-MM-dd HH:mm",
+            "yyyy/MM/dd HH:mm:ss",
+            "yyyy/MM/dd HH:mm",
+            "yyyy-MM-dd",
+            "yyyy/MM/dd",
+        ]
+        for pat in patterns {
+            let df = DateFormatter()
+            df.locale = Locale(identifier: "en_US_POSIX")
+            df.timeZone = TimeZone.current
+            df.dateFormat = pat
+            if let d = df.date(from: t) { return d }
+        }
+        return nil
+    }
+}
+
+// MARK: - 导入统计与字段校验（规格 v1.4 §5.4）
+
+struct ImportFailure {
+    let title: String
+    let reason: String
+}
+
+struct ImportSummary {
+    var imported = 0
+    var updated = 0
+    var duplicate = 0
+    var failed = 0
+    var fixed = 0
+    var failures: [ImportFailure] = []
+    var fixNotes: [String] = []
+    static let detailLimit = 10
+
+    static func += (a: inout ImportSummary, b: ImportSummary) {
+        a.imported += b.imported
+        a.updated += b.updated
+        a.duplicate += b.duplicate
+        a.failed += b.failed
+        a.fixed += b.fixed
+        a.failures += b.failures.prefix(max(0, detailLimit - a.failures.count))
+        a.fixNotes += b.fixNotes
+    }
+
+    var isEmpty: Bool { imported == 0 && updated == 0 && duplicate == 0 && failed == 0 }
+}
+
+enum ValidateResult {
+    case ok
+    case rejected(String)
+    case fixed(String)
+}
+
+/// 逐条字段校验（规格 v1.4 五条）
+enum ScheduleValidate {
+    static let earliest = DateComponents(calendar: .current, year: 2000, month: 1, day: 1).date ?? .distantPast
+    static let latest   = DateComponents(calendar: .current, year: 2100, month: 1, day: 1).date ?? .distantFuture
+
+    static func check(_ e: inout CalendarEvent) -> ValidateResult {
+        // ① 标题去空格后不能为空
+        let t = e.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return .rejected("标题是空的") }
+        e.title = t
+
+        // ④ 年份范围
+        guard e.start >= earliest, e.start <= latest else {
+            return .rejected("开始时间不在 2000–2100 年之间（\(formatDate("yyyy-MM-dd", e.start))）")
+        }
+        guard e.end >= earliest, e.end <= latest else {
+            return .rejected("结束时间不在 2000–2100 年之间（\(formatDate("yyyy-MM-dd", e.end))）")
+        }
+
+        // ⑤ 全天事件允许 start == end；其余事件必须 end > start
+        if e.end < e.start {
+            let oldEnd = formatDate("MM-dd HH:mm", e.end)
+            e.end = e.start.addingTimeInterval(3600)
+            return .fixed("\(e.title)：结束 \(oldEnd) 早于开始，已改为开始后 1 小时")
+        }
+        if !e.isAllDay && e.end == e.start {
+            e.end = e.start.addingTimeInterval(3600)
+            return .fixed("\(e.title)：起止时间相同，已改为 1 小时")
+        }
+        return .ok
+    }
 }
 
 enum ScheduleAuth { case unknown, granted, denied }
@@ -457,13 +633,18 @@ enum ScheduleIO {
                                      .plainText, UTType(filenameExtension: "md") ?? .plainText]
         panel.allowsMultipleSelection = true
         guard panel.runModal() == .OK else { return }
-        var added = 0, updated = 0
+        // 合并策略（远端 merge 语义）+ 校验与明细反馈（本地 v1.4 语义）：
+        // 解析 → 字段校验 → 覆盖式合并（已有的覆盖、没有的新增）→ 明细弹窗
+        var sum = ImportSummary()
         for url in panel.urls {
-            guard let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
-            let r = ingest(text, format: ScheduleImport.format(for: url))
-            added += r.added; updated += r.updated
+            guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+                sum.failures.append(ImportFailure(title: url.lastPathComponent, reason: "文件读不出来（编码不是 UTF-8？）"))
+                sum.failed += 1
+                continue
+            }
+            sum += ingest(text, format: ScheduleImport.format(for: url))
         }
-        notify(result(added, updated))
+        report(sum, prefix: "")
     }
 
     static func importFromClipboard() {
@@ -471,31 +652,103 @@ enum ScheduleIO {
             notify("剪贴板是空的")
             return
         }
-        let r = ingest(text, format: ScheduleImport.sniffText(text))
-        notify("剪贴板：" + result(r.added, r.updated))
+        report(ingest(text, format: ScheduleImport.sniffText(text)), prefix: "从剪贴板")
     }
 
-    private static func result(_ added: Int, _ updated: Int) -> String {
-        if added == 0 && updated == 0 { return "没有变化（内容和已有的完全一样）" }
-        var parts: [String] = []
-        if added > 0 { parts.append("新增 \(added) 条") }
-        if updated > 0 { parts.append("覆盖更新 \(updated) 条") }
-        return "导入完成：" + parts.joined(separator: "，")
-    }
-
-    /// 解析 → 合并（已有的覆盖、没有的新增）→ 写入本地文件
+    /// 解析 → 字段校验 → 覆盖式合并（已有的覆盖、没有的新增）→ 写入。
+    /// 返回可统计的结果（规格 v1.4 §5.4：失败不许静默；导入反馈含新增/覆盖条数）
     @discardableResult
-    static func ingest(_ text: String, format: ScheduleImport.Format) -> (added: Int, updated: Int) {
+    static func ingest(_ text: String, format: ScheduleImport.Format) -> ImportSummary {
+        var sum = ImportSummary()
         let parsed = ScheduleImport.parse(text, format: format)
-        guard !parsed.isEmpty else { return (0, 0) }
-        let r = ScheduleImport.merge(parsed, into: localEvents())
-        guard r.added + r.updated > 0 else { return (0, 0) }
-        writeLocal(r.list)
-        // 记录上次导入时间（规格 §6 scheduleLastImport），设置页展示用
-        UserDefaults.standard.set(ISO8601DateFormatter().string(from: Date()),
-                                  forKey: Pref.scheduleLastImport)
-        ScheduleStore.shared.reload()
-        return (r.added, r.updated)
+
+        if parsed.isEmpty {
+            sum.failed = 1
+            sum.failures.append(ImportFailure(
+                title: "（整个文件）",
+                reason: "没有解析出任何日程。json 请确认是数组格式、日期是 ISO8601 或时间戳；ics 请确认含 BEGIN:VEVENT"))
+            return sum
+        }
+
+        // 字段校验（规格 v1.4 五条口径）
+        var valid: [CalendarEvent] = []
+        for var e in parsed {
+            switch ScheduleValidate.check(&e) {
+            case .ok:
+                valid.append(e)
+            case .rejected(let why):
+                sum.failed += 1
+                if sum.failures.count < ImportSummary.detailLimit {
+                    sum.failures.append(ImportFailure(title: e.title, reason: why))
+                }
+            case .fixed(let why):
+                sum.fixed += 1
+                sum.fixNotes.append(why)
+                valid.append(e)
+            }
+        }
+
+        // 覆盖式合并：已有的覆盖、没有的新增（远端 merge 语义）
+        let current = localEvents()
+        let merged = ScheduleImport.merge(valid, into: current)
+        sum.imported = merged.added
+        sum.updated = merged.updated
+        sum.duplicate = 0
+
+        if merged.added + merged.updated > 0 {
+            writeLocal(merged.list)
+            UserDefaults.standard.set(ISO8601DateFormatter().string(from: Date()),
+                                      forKey: Pref.scheduleLastImport)
+            ScheduleStore.shared.reload()
+        }
+        return sum
+    }
+
+    /// 统一反馈文案 + 失败明细（规格 v1.4：0 条或失败必须弹窗）
+    private static func report(_ sum: ImportSummary, prefix: String) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+
+        let head = prefix.isEmpty ? "" : "\(prefix)导入"
+        if sum.imported == 0 && sum.updated == 0 && sum.failed == 0 {
+            alert.messageText = "\(head)完成：没有变化（内容和已有的完全一样）"
+            alert.informativeText = "0 条新增，0 条覆盖。"
+        } else {
+            alert.messageText = sum.imported == 0 && sum.updated == 0 && sum.failed > 0
+                ? "\(head)失败" : "\(head)完成"
+            var parts: [String] = []
+            if sum.imported > 0 { parts.append("新增 \(sum.imported) 条") }
+            if sum.updated > 0 { parts.append("覆盖更新 \(sum.updated) 条") }
+            if sum.duplicate > 0 { parts.append("跳过 \(sum.duplicate) 条重复") }
+            parts.append("失败 \(sum.failed) 条")
+            alert.informativeText = parts.joined(separator: "，")
+            if sum.imported == 0 && sum.updated == 0 && sum.failed > 0 { alert.alertStyle = .warning }
+        }
+
+        // 明细：修正说明 + 前 10 条失败原因
+        var details: [String] = []
+        if sum.fixed > 0 {
+            details.append("已修正 \(sum.fixed) 条结束时间早于开始时间：")
+            details.append(contentsOf: sum.fixNotes.prefix(5).map { "  · \($0)" })
+        }
+        if !sum.failures.isEmpty {
+            if !details.isEmpty { details.append("") }
+            details.append("失败明细" + (sum.failed > sum.failures.count ? "（前 \(sum.failures.count) 条）" : "") + "：")
+            details.append(contentsOf: sum.failures.map { "  · \($0.title.isEmpty ? "（无标题）" : $0.title)：\($0.reason)" })
+        }
+        if !details.isEmpty {
+            let box = NSScrollView(frame: NSRect(x: 0, y: 0, width: 380, height: 130))
+            box.hasVerticalScroller = true
+            box.borderType = .bezelBorder
+            let tv = NSTextView(frame: NSRect(x: 0, y: 0, width: 380, height: 130))
+            tv.isEditable = false
+            tv.font = .systemFont(ofSize: 11)
+            tv.string = details.joined(separator: "\n")
+            box.documentView = tv
+            alert.accessoryView = box
+        }
+        alert.addButton(withTitle: "好")
+        alert.runModal()
     }
 
     /// 只读本地 JSON 文件（不经过 store，避免受授权状态影响）
@@ -1212,16 +1465,14 @@ struct ScheduleWindowView: View {
                         .font(.system(size: 12, weight: isToday ? .semibold : .regular))
                         .foregroundStyle(isToday ? Color.primary : Color.secondary)
                 }
-                if !allDay.isEmpty {
-                    Text(allDay.prefix(2).map(\.title).joined(separator: " · "))
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .help(allDay.map(\.title).joined(separator: "、"))
-                        .padding(.horizontal, 2)
-                }
             }
             .frame(height: headerHeight, alignment: .top)
+
+            // 全天条（规格 v1.4）：18pt 高、日历色 25%、圆角 3、11pt 单行；
+            // 多条时首条整行 + 「+N」徽标；无全天事件的列不占位
+            if !allDay.isEmpty {
+                allDayBar(allDay, day: day)
+            }
 
             ZStack(alignment: .topLeading) {
                 // 网格
@@ -1252,6 +1503,38 @@ struct ScheduleWindowView: View {
                     .simultaneousGesture(TapGesture(count: 1).onEnded { })
             }
             .frame(maxWidth: .infinity)
+        }
+    }
+
+    /// 周视图每列顶部的全天事件条（规格 v1.4 §4.2）
+    @ViewBuilder
+    private func allDayBar(_ allDay: [CalendarEvent], day: Date) -> some View {
+        let first = allDay[0]
+        let more = allDay.count - 1
+        HStack(spacing: 2) {
+            Text(first.title)
+                .font(.system(size: 11))
+                .lineLimit(1)
+                .truncationMode(.tail)
+            if more > 0 {
+                Text("+\(more)")
+                    .font(.system(size: 10, weight: .semibold))
+                    .opacity(0.75)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 3)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: 18, alignment: .center)
+        .background(Color(hex: first.calendarColor).opacity(0.25), in: RoundedRectangle(cornerRadius: 3))
+        .padding(.horizontal, 1)
+        .padding(.bottom, 2)
+        .contentShape(Rectangle())
+        .help(allDay.map(\.title).joined(separator: "、"))
+        .onTapGesture {
+            // 点全天条进日视图（规格 v1.4）
+            anchor = day
+            mode = 0
         }
     }
 

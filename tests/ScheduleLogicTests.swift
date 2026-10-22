@@ -244,5 +244,81 @@ ok(ScheduleImport.sniffText("09:00 晨会") == .text, "识别：纯文本识别�
 // 还原偏好
 for k in touchKeys { UserDefaults.standard.removeObject(forKey: k) }
 
+
+// MARK: - v1.4 Bug 1 回归：ISO8601 日期解码（用户 312 条日程静默失败）
+let isoDate = "2026-10-22T07:30:00+08:00"
+let isoJSON = "[{\"id\":\"00000000-0000-0000-0000-000000000001\",\"title\":\"起床\",\"start\":\"2026-10-22T07:30:00+08:00\",\"end\":\"2026-10-22T07:45:00+08:00\",\"isAllDay\":false,\"calendarName\":\"求职日程\",\"calendarColor\":\"#4A99E9\",\"ekEventID\":null,\"uid\":\"keovi-0001@dockside\",\"occurrenceStart\":null}]"
+let isoParsed = ScheduleImport.parseJSON(isoJSON)
+ok(isoParsed.count == 1, "Bug1 回归：ISO8601 字符串日期可解码（实际 \(isoParsed.count) 条）")
+ok(isoParsed.first?.title == "起床", "Bug1 回归：标题保留")
+ok(isoParsed.first.map { formatDate("HH:mm", $0.start) } == "07:30",
+   "Bug1 回归：时间按本地时区正确（实际 \(isoParsed.first.map { formatDate("HH:mm", $0.start) } ?? "-")）")
+ok(isoParsed.first?.uid == "keovi-0001@dockside", "Bug1 回归：uid 保留")
+
+// 数字时间戳旧格式仍能读（双向兼容）
+let tsJSON = "[{\"id\":\"00000000-0000-0000-0000-000000000002\",\"title\":\"旧格式\",\"start\":1792623600,\"end\":1792624500,\"isAllDay\":false,\"calendarName\":\"工作\",\"calendarColor\":\"#4A99E9\"}]"
+ok(ScheduleImport.parseJSON(tsJSON).count == 1, "Bug1 回归：数字时间戳旧格式仍可解码")
+
+// 写出去的必须是数字时间戳（旧版本读得回来）
+let rtData = try! JSONEncoder().encode(isoParsed)
+let rtBack = try? JSONDecoder().decode([CalendarEvent].self, from: rtData)
+ok(rtBack?.count == 1, "Bug1 回归：自己写出的格式可被标准解码器读回")
+
+// 日期解析器各种格式
+ok(ScheduleDateParse.parse("2026-10-22T07:30:00+08:00") != nil, "日期解析：带时区 ISO8601")
+ok(ScheduleDateParse.parse("2026-10-22T07:30:00Z") != nil, "日期解析：UTC ISO8601")
+ok(ScheduleDateParse.parse("2026-10-22T07:30:00.123+08:00") != nil, "日期解析：带小数秒")
+ok(ScheduleDateParse.parse("2026-10-22 07:30:00") != nil, "日期解析：无时区空格格式")
+ok(ScheduleDateParse.parse("2026-10-22") != nil, "日期解析：纯日期")
+ok(ScheduleDateParse.parse("1792623600") != nil, "日期解析：字符串形式时间戳")
+ok(ScheduleDateParse.parse("不是日期") == nil, "日期解析：垃圾字符串返回 nil")
+ok(ScheduleDateParse.parse("") == nil, "日期解析：空串返回 nil")
+
+// MARK: - v1.4 字段校验五条
+var v1 = ev("", dt(2026, 10, 22, 9, 0), dt(2026, 10, 22, 10, 0))
+if case .rejected = ScheduleValidate.check(&v1) { ok(true, "校验①：空标题被拒绝") } else { ok(false, "校验①：空标题被拒绝") }
+
+var v1b = ev("   ", dt(2026, 10, 22, 9, 0), dt(2026, 10, 22, 10, 0))
+if case .rejected = ScheduleValidate.check(&v1b) { ok(true, "校验①：纯空格标题被拒绝") } else { ok(false, "校验①：纯空格标题被拒绝") }
+
+var v2 = ev("正常", dt(2026, 10, 22, 9, 0), dt(2026, 10, 22, 10, 0))
+if case .ok = ScheduleValidate.check(&v2) { ok(true, "校验：正常事件通过") } else { ok(false, "校验：正常事件通过") }
+
+var v3 = ev("结束早于开始", dt(2026, 10, 22, 10, 0), dt(2026, 10, 22, 9, 0))
+if case .fixed = ScheduleValidate.check(&v3) {
+    ok(v3.end.timeIntervalSince(v3.start) == 3600, "校验③：end<start 自动修正为 start+1h")
+} else { ok(false, "校验③：end<start 自动修正") }
+
+var v4 = ev("1999年", dt(1999, 12, 31, 9, 0), dt(1999, 12, 31, 10, 0))
+if case .rejected = ScheduleValidate.check(&v4) { ok(true, "校验④：1999 年视为脏数据拒绝") } else { ok(false, "校验④：1999 年拒绝") }
+
+var v5 = ev("2101年", dt(2101, 1, 1, 9, 0), dt(2101, 1, 1, 10, 0))
+if case .rejected = ScheduleValidate.check(&v5) { ok(true, "校验④：2101 年视为脏数据拒绝") } else { ok(false, "校验④：2101 年拒绝") }
+
+var v6 = ev("全天起止相同", dt(2026, 10, 22, 0, 0), dt(2026, 10, 22, 0, 0), allDay: true)
+if case .ok = ScheduleValidate.check(&v6) { ok(true, "校验⑤：全天事件允许 start == end") } else { ok(false, "校验⑤：全天允许 start==end") }
+
+var v7 = ev("定时起止相同", dt(2026, 10, 22, 9, 0), dt(2026, 10, 22, 9, 0))
+if case .fixed = ScheduleValidate.check(&v7) { ok(true, "校验：定时事件起止相同被修正") } else { ok(false, "校验：定时起止相同被修正") }
+
+var v8 = ev("  两边有空格  ", dt(2026, 10, 22, 9, 0), dt(2026, 10, 22, 10, 0))
+_ = ScheduleValidate.check(&v8)
+ok(v8.title == "两边有空格", "校验①：标题首尾空格被去掉（实际「\(v8.title)」）")
+
+// 导入统计结构
+var sumA = ImportSummary(); sumA.imported = 3; sumA.failed = 1
+var sumB = ImportSummary(); sumB.imported = 2; sumB.duplicate = 4
+sumA += sumB
+ok(sumA.imported == 5 && sumA.duplicate == 4 && sumA.failed == 1, "导入统计：多文件累加正确")
+
+// MARK: - v1.4 Bug 2 回归：全天事件在周视图有像素位（数据侧）
+// 只有全天事件的一天：状态栏计数用的 store.events 与列内 allDay 必须一致
+let onlyAllDayPool = [ev("重阳节", today0, today0.addingTimeInterval(86400), allDay: true),
+                      ev("霜降", dt(2026, 10, 23, 0, 0), dt(2026, 10, 24, 0, 0), allDay: true)]
+let todayOnlyAllDay = ScheduleFilter.today(onlyAllDayPool, now: now)
+ok(todayOnlyAllDay.count == 1, "Bug2 回归：今日只有全天事件时筛选得出 1 条")
+ok(todayOnlyAllDay.allSatisfy { $0.isAllDay }, "Bug2 回归：筛出的是全天事件（旧代码不渲染这类）")
+
+
 print("\n=== \(pass) 通过 / \(fail) 失败 ===")
 exit(fail == 0 ? 0 : 1)
