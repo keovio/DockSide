@@ -254,6 +254,7 @@ struct TodoPane: View {
 }
 
 struct SchedulePane: View {
+    @AppStorage(Pref.scheduleCalendars) private var calendarsRaw = ""   // 只为让开关切换后界面刷新
     @AppStorage(Pref.scheduleTitleChars) private var titleChars = 6
     @AppStorage(Pref.scheduleHover) private var hover = true
     @AppStorage(Pref.scheduleWindow) private var window = "today"
@@ -331,20 +332,22 @@ struct SchedulePane: View {
         .onReceive(authTimer) { _ in store.refreshAuth() }
     }
 
-    /// 勾上 = 显示这个日历；取消勾选 = 加进排除集
+    /// scheduleCalendars 是「要显示的日历」集合，空 = 全部显示（和周视图 chips 同一个语义）
     private func calendarToggle(_ cal: EKCalendar) -> some View {
+        _ = calendarsRaw   // 依赖它，切换后这一行会重新计算
         let picked = ScheduleFilter.selectedCalendars()
+        let all = Set(store.calendars.map(\.title))
         let on = picked.isEmpty || picked.contains(cal.title)
         return Toggle(isOn: Binding(
             get: { on },
             set: { show in
-                var set = picked
-                if show { set.remove(cal.title) } else { set.insert(cal.title) }
-                // 全选时排除集为空；否则把「当前可见的」全写进来，避免「空集 = 全部」把排除吞掉
-                if set.isEmpty, !show {
-                    set = Set(store.calendars.map(\.title).filter { $0 != cal.title })
-                }
+                var set = picked.isEmpty ? all : picked
+                if show { set.insert(cal.title) } else { set.remove(cal.title) }
+                // 全部打开 → 存空（= 全部，以后新加的日历也默认显示）
+                if all.isSubset(of: set) { set = [] }
                 ScheduleFilter.setSelected(set)
+                calendarsRaw = UserDefaults.standard.string(forKey: Pref.scheduleCalendars) ?? ""
+                store.objectWillChange.send()
             }
         )) {
             HStack(spacing: 6) {
