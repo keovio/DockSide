@@ -18,6 +18,7 @@ let allWidgets: [WidgetDef] = [
     WidgetDef(id: "pomodoro", name: "番茄钟", symbol: "timer")       { AnyView(PomodoroWidget()) },
     WidgetDef(id: "music",    name: "正在播放", symbol: "music.note") { AnyView(NowPlayingWidget()) },
     WidgetDef(id: "countdown", name: "倒数日", symbol: "hourglass") { AnyView(CountdownWidget()) },
+    WidgetDef(id: "aiusage", name: "AI 用量", symbol: "gauge") { AnyView(AIUsageWidget()) },
 ]
 
 func widgetDef(_ id: String) -> WidgetDef? { allWidgets.first { $0.id == id } }

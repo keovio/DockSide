@@ -5,7 +5,7 @@ import ServiceManagement
 import ApplicationServices
 
 enum SettingsPage: String, Hashable, CaseIterable {
-    case general, layout, appearance, shortcuts, clock, system, todo, schedule, pomodoro, music, countdown, about
+    case general, layout, appearance, shortcuts, clock, system, todo, schedule, pomodoro, music, countdown, aiusage, about
 
     var title: String {
         switch self {
@@ -20,6 +20,7 @@ enum SettingsPage: String, Hashable, CaseIterable {
         case .pomodoro: return "番茄钟"
         case .music: return "正在播放"
         case .countdown: return "倒数日"
+        case .aiusage: return "AI 用量"
         case .about: return "关于"
         }
     }
@@ -37,6 +38,7 @@ enum SettingsPage: String, Hashable, CaseIterable {
         case .pomodoro: return "timer"
         case .music: return "music.note"
         case .countdown: return "hourglass"
+        case .aiusage: return "gauge"
         case .about: return "info.circle"
         }
     }
@@ -58,7 +60,7 @@ struct SettingsView: View {
                     ForEach([SettingsPage.general, .layout, .appearance, .shortcuts], id: \.self) { item($0) }
                 }
                 Section("组件") {
-                    ForEach([SettingsPage.clock, .system, .todo, .schedule, .pomodoro, .music, .countdown], id: \.self) { item($0) }
+                    ForEach([SettingsPage.clock, .system, .todo, .schedule, .pomodoro, .music, .countdown, .aiusage], id: \.self) { item($0) }
                 }
                 Section {
                     item(.about)
@@ -90,6 +92,7 @@ struct SettingsView: View {
         case .pomodoro: PomodoroPane()
         case .music: MusicPane()
         case .countdown: CountdownPane()
+        case .aiusage: AIUsagePane()
         case .about: AboutPane()
         }
     }
@@ -238,9 +241,9 @@ struct TodoPane: View {
     var body: some View {
         Form {
             Section("显示内容") {
-                Toggle("进度环", isOn: $showRing)
-                Toggle("第一条待办标题", isOn: $showTitle)
-                Toggle("完成按钮", isOn: $showCheck)
+                Toggle("完成进度圆环（已完成/总数）", isOn: $showRing)
+                Toggle("下一条待办的内容", isOn: $showTitle)
+                Toggle("打勾按钮（点一下完成这一条）", isOn: $showCheck)
             }
             Section("Dock 旁显示") {
                 Picker("标题宽度", selection: $titleChars) {
@@ -291,11 +294,11 @@ struct SchedulePane: View {
     var body: some View {
         Form {
             Section("显示内容") {
-                Toggle("时间（09:00 / 全天）", isOn: $showTime)
-                Toggle("「明天」「周五」", isOn: $showDay)
-                Toggle("标题", isOn: $showTitle)
-                Toggle("快开始 / 进行中的剩余时间", isOn: $showRemain)
-                Text("关掉的部分不占宽度。时间和标题都关掉时仍会显示标题。").font(.caption).foregroundStyle(.secondary)
+                Toggle("开始时间（如 09:00，全天日程显示「全天」）", isOn: $showTime)
+                Toggle("日期（不是今天的日程，前面显示「明天」「周五」）", isOn: $showDay)
+                Toggle("日程名称", isOn: $showTitle)
+                Toggle("倒计时（开始前 15 分钟内显示「还有几分钟」，进行中显示「还剩多久」）", isOn: $showRemain)
+                Text("关掉的部分不占宽度。开始时间和日程名称都关掉时，仍会显示日程名称。").font(.caption).foregroundStyle(.secondary)
             }
             Section("Dock 旁显示") {
                 Picker("标题宽度", selection: $titleChars) {
