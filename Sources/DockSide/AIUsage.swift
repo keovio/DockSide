@@ -53,6 +53,14 @@ struct GLMUsage {
     var tokensToday: Double?
 }
 
+struct GLMPackUsage {
+    var available: Double      // 生效中 token 资源包剩余合计
+    var total: Double          // 这些资源包原始总量
+    var count: Int
+    var nearestExpiry: Date?
+    var cash: Double?          // 现金余额（¥）
+}
+
 final class AIUsageStore: ObservableObject {
     static let shared = AIUsageStore()
 
@@ -60,6 +68,8 @@ final class AIUsageStore: ObservableObject {
     @Published var glm: GLMUsage?
     @Published var deepseekError: String?
     @Published var glmError: String?
+    @Published var glmPack: GLMPackUsage?
+    @Published var glmPackError: String?
     @Published var updated: Date?
     @Published var loading = false
 
@@ -68,11 +78,13 @@ final class AIUsageStore: ObservableObject {
 
     @Published private(set) var hasDeepSeekKey = !AIKeychain.get("deepseek").isEmpty
     @Published private(set) var hasGLMKey = !AIKeychain.get("glm").isEmpty
+    @Published private(set) var hasGLMPackKey = !AIKeychain.get("glmpack").isEmpty
 
     func setKey(_ account: String, _ value: String) {
         AIKeychain.set(account, value)
         hasDeepSeekKey = !AIKeychain.get("deepseek").isEmpty
         hasGLMKey = !AIKeychain.get("glm").isEmpty
+        hasGLMPackKey = !AIKeychain.get("glmpack").isEmpty
         if started { refresh() } else { start() }
     }
 
@@ -93,18 +105,21 @@ final class AIUsageStore: ObservableObject {
 
     func refresh() {
         let d = UserDefaults.standard
-        let dsKey = AIKeychain.get("deepseek"), glmKey = AIKeychain.get("glm")
+        let dsKey = AIKeychain.get("deepseek"), glmKey = AIKeychain.get("glm"), packKey = AIKeychain.get("glmpack")
         let wantDS = d.bool(forKey: Pref.aiShowDeepSeek) && !dsKey.isEmpty
         let wantGLM = d.bool(forKey: Pref.aiShowGLM) && !glmKey.isEmpty
+        let wantPack = d.bool(forKey: Pref.aiShowGLMPack) && !packKey.isEmpty
         if dsKey.isEmpty { deepseek = nil; deepseekError = nil }
         if glmKey.isEmpty { glm = nil; glmError = nil }
-        guard wantDS || wantGLM else { return }
+        if packKey.isEmpty { glmPack = nil; glmPackError = nil }
+        guard wantDS || wantGLM || wantPack else { return }
         loading = true
         let region = d.string(forKey: Pref.aiGLMRegion) ?? "cn"
         Task {
             async let ds = AIUsageStore.loadDeepSeek(wantDS ? dsKey : nil)
             async let gl = AIUsageStore.loadGLM(wantGLM ? glmKey : nil, region: region)
-            let (r1, r2) = await (ds, gl)
+            async let pk = AIUsageStore.loadPack(wantPack ? packKey : nil, region: region)
+            let (r1, r2, r3) = await (ds, gl, pk)
             await MainActor.run {
                 switch r1 {
                 case .success(let v)?: self.deepseek = v; self.deepseekError = nil
@@ -114,6 +129,11 @@ final class AIUsageStore: ObservableObject {
                 switch r2 {
                 case .success(let v)?: self.glm = v; self.glmError = nil
                 case .failure(let e)?: self.glmError = AIUsageStore.describe(e)
+                case nil: break
+                }
+                switch r3 {
+                case .success(let v)?: self.glmPack = v; self.glmPackError = nil
+                case .failure(let e)?: self.glmPackError = AIUsageStore.describe(e)
                 case nil: break
                 }
                 self.updated = Date()
@@ -132,6 +152,11 @@ final class AIUsageStore: ObservableObject {
         return await capture { try await fetchGLM(key, region: region) }
     }
 
+    private static func loadPack(_ key: String?, region: String) async -> Result<GLMPackUsage, Error>? {
+        guard let key else { return nil }
+        return await capture { try await fetchGLMPack(key, region: region) }
+    }
+
     private static func capture<T>(_ f: () async throws -> T) async -> Result<T, Error> {
         do { return .success(try await f()) } catch { return .failure(error) }
     }
@@ -147,7 +172,7 @@ final class AIUsageStore: ObservableObject {
         return e.localizedDescription
     }
 
-    private static func get(_ url: URL, auth: String) async throws -> [String: Any] {
+    fileprivate static func get(_ url: URL, auth: String) async throws -> [String: Any] {
         var req = URLRequest(url: url, timeoutInterval: 15)
         req.setValue(auth, forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -162,7 +187,7 @@ final class AIUsageStore: ObservableObject {
         return obj
     }
 
-    private static func num(_ v: Any?) -> Double? {
+    fileprivate static func num(_ v: Any?) -> Double? {
         if let d = v as? Double { return d }
         if let i = v as? Int { return Double(i) }
         if let n = v as? NSNumber { return n.doubleValue }
@@ -244,6 +269,50 @@ final class AIUsageStore: ObservableObject {
     }
 }
 
+extension AIUsageStore {
+    /// 控制台接口：先 Bearer，401/403 再用原始 key
+    fileprivate static func getEither(_ url: URL, key: String) async throws -> [String: Any] {
+        do { return try await get(url, auth: "Bearer \(key)") }
+        catch let f as Failure where f.message == "API Key 无效" { return try await get(url, auth: key) }
+    }
+
+    /// 智谱资源包（标准 API Key）。非公开的控制台接口：
+    /// /api/biz/tokenAccounts/list/my → rows[{resourcePackageName, tokensMagnitude, availableBalance,
+    ///   consumeType TOKENS|TIMES, status EFFECTIVE|NOTUSED|EXPIRED|CANCELLED, packageExpirationTime(北京时间)}]
+    /// /api/biz/account/query-customer-account-report → data.balance / availableBalance（现金余额，失败不影响）
+    static func fetchGLMPack(_ key: String, region: String) async throws -> GLMPackUsage {
+        let host = region == "intl" ? "https://api.z.ai" : "https://open.bigmodel.cn"
+        let obj = try await getEither(URL(string: host + "/api/biz/tokenAccounts/list/my?pageNum=1&pageSize=100&filterEnabled=false")!, key: key)
+        if let code = num(obj["code"]), code != 200 {
+            throw Failure(message: (obj["msg"] as? String) ?? "查不到资源包（需要标准 API Key）")
+        }
+        let rows = obj["rows"] as? [[String: Any]] ?? []
+        let parser = DateFormatter()
+        parser.locale = Locale(identifier: "en_US_POSIX")
+        parser.timeZone = TimeZone(identifier: "Asia/Shanghai")
+        parser.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        var usage = GLMPackUsage(available: 0, total: 0, count: 0, nearestExpiry: nil, cash: nil)
+        for r in rows {
+            let status = (r["status"] as? String ?? "").uppercased()
+            let type = (r["consumeType"] as? String ?? "TOKENS").uppercased()
+            guard status == "EFFECTIVE" || status == "NOTUSED", type == "TOKENS" else { continue }
+            let avail = num(r["availableBalance"]) ?? num(r["tokenBalance"]) ?? 0
+            let total = num(r["tokensMagnitude"]) ?? avail
+            usage.available += avail
+            usage.total += max(total, avail)
+            usage.count += 1
+            if avail > 0, let s = r["packageExpirationTime"] as? String, let dt = parser.date(from: s) {
+                usage.nearestExpiry = min(usage.nearestExpiry ?? dt, dt)
+            }
+        }
+        if let c = try? await getEither(URL(string: host + "/api/biz/account/query-customer-account-report")!, key: key),
+           let data = c["data"] as? [String: Any] {
+            usage.cash = num(data["availableBalance"]) ?? num(data["balance"])
+        }
+        return usage
+    }
+}
+
 /// 1234 → 1.2K，3_400_000 → 3.4M
 func shortTokens(_ v: Double) -> String {
     switch v {
@@ -267,6 +336,7 @@ struct AIUsageWidget: View {
     @Environment(\.measuring) private var measuring
     @AppStorage(Pref.aiShowDeepSeek) private var showDS = true
     @AppStorage(Pref.aiShowGLM) private var showGLM = true
+    @AppStorage(Pref.aiShowGLMPack) private var showPack = true
     @AppStorage(Pref.aiShowToday) private var showToday = true
     @Environment(\.widgetInk) private var ink
 
@@ -274,6 +344,7 @@ struct AIUsageWidget: View {
         var list: [Item] = []
         if showDS, store.hasDeepSeekKey { list.append(dsItem) }
         if showGLM, store.hasGLMKey { list.append(glmItem) }
+        if showPack, store.hasGLMPackKey { list.append(packItem) }
         return list
     }
 
@@ -307,6 +378,17 @@ struct AIUsageWidget: View {
                     sub: store.glmError, warn: store.glmError != nil, ring: nil)
     }
 
+    private var packItem: Item {
+        if let v = store.glmPack {
+            let ratio = v.total > 0 ? v.available / v.total : 0
+            return Item(id: "pack", name: "GLM 资源包", main: "剩 " + shortTokens(v.available),
+                        sub: v.cash.map { "余额 ¥" + String(format: "%.2f", $0) },
+                        warn: v.count == 0 || ratio < 0.1, ring: v.count > 0 ? ratio : nil)
+        }
+        return Item(id: "pack", name: "GLM 资源包", main: store.glmPackError == nil ? "…" : "—",
+                    sub: store.glmPackError, warn: store.glmPackError != nil, ring: nil)
+    }
+
     var body: some View {
         Group {
             if items.isEmpty {
@@ -318,7 +400,7 @@ struct AIUsageWidget: View {
                 VStack(spacing: size * 0.25) {
                     ForEach(items) { it in
                         VStack(spacing: 0) {
-                            Text(it.id == "ds" ? "DS" : "GLM").font(.system(size: size * 0.55)).opacity(0.6)
+                            Text(it.id == "ds" ? "DS" : it.id == "pack" ? "包" : "GLM").font(.system(size: size * 0.55)).opacity(0.6)
                             Text(compactValue(it))
                                 .font(.system(size: size * 0.72, weight: .semibold, design: .rounded))
                                 .foregroundStyle(it.warn ? Color.orange : ink)
@@ -347,6 +429,7 @@ struct AIUsageWidget: View {
     private func compactValue(_ it: Item) -> String {
         if it.id == "ds", let v = store.deepseek { return String(format: "%.0f", v.balance) }
         if it.id == "glm", let v = store.glm { return "\(Int(max(0, 100 - v.fiveHourUsed).rounded()))%" }
+        if it.id == "pack", let v = store.glmPack { return shortTokens(v.available) }
         return "—"
     }
 
@@ -382,6 +465,12 @@ struct AIUsageWidget: View {
             if let t = v.tokensToday { s += "；今日 \(shortTokens(t)) tokens" }
             lines.append(s)
         } else if let e = store.glmError { lines.append("GLM：\(e)") }
+        if let v = store.glmPack {
+            var s = "GLM 资源包 \(v.count) 个，剩 \(shortTokens(v.available)) / \(shortTokens(v.total)) tokens"
+            if let e = v.nearestExpiry { s += "，最早 \(formatDate("M月d日", e)) 到期" }
+            if let c = v.cash { s += "；现金余额 ¥" + String(format: "%.2f", c) }
+            lines.append(s)
+        } else if let e = store.glmPackError { lines.append("GLM 资源包：\(e)") }
         if let u = store.updated { lines.append("更新于 \(formatDate("HH:mm", u))，点一下刷新") }
         return lines.isEmpty ? "点一下设置 API Key" : lines.joined(separator: "\n")
     }
@@ -393,11 +482,13 @@ struct AIUsagePane: View {
     @ObservedObject private var store = AIUsageStore.shared
     @AppStorage(Pref.aiShowDeepSeek) private var showDS = true
     @AppStorage(Pref.aiShowGLM) private var showGLM = true
+    @AppStorage(Pref.aiShowGLMPack) private var showPack = true
     @AppStorage(Pref.aiShowToday) private var showToday = true
     @AppStorage(Pref.aiGLMRegion) private var region = "cn"
     @AppStorage(Pref.aiRefreshMinutes) private var minutes = 5
     @State private var dsKey = ""
     @State private var glmKey = ""
+    @State private var packKey = ""
 
     var body: some View {
         Form {
@@ -410,11 +501,13 @@ struct AIUsagePane: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("智谱 GLM") {
-                Toggle("在 Dock 旁显示", isOn: $showGLM)
                 Picker("账号所在", selection: $region) {
                     Text("国内（bigmodel.cn）").tag("cn")
                     Text("国际（z.ai）").tag("intl")
                 }
+            }
+            Section("GLM 编码套餐（Coding Plan）") {
+                Toggle("在 Dock 旁显示", isOn: $showGLM)
                 keyRow(saved: store.hasGLMKey, text: $glmKey, account: "glm", placeholder: "API Key")
                 status(store.glm.map { v in
                     var s = "5 小时额度剩 \(Int(max(0, 100 - v.fiveHourUsed)))%"
@@ -422,11 +515,23 @@ struct AIUsagePane: View {
                     if let t = v.tokensToday { s += "，今日 \(shortTokens(t)) tokens" }
                     return s
                 }, error: store.glmError)
-                Text("需要 GLM Coding Plan 的 Key：显示 5 小时额度剩余和今日 token 数。按量付费账号智谱没有开放余额接口。")
+                Text("填编码套餐的 API Key：显示 5 小时额度剩余和今日 token 数。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("GLM 资源包 / 余额") {
+                Toggle("在 Dock 旁显示", isOn: $showPack)
+                keyRow(saved: store.hasGLMPackKey, text: $packKey, account: "glmpack", placeholder: "标准 API Key")
+                status(store.glmPack.map { v in
+                    var s = "\(v.count) 个资源包，剩 \(shortTokens(v.available)) tokens"
+                    if let e = v.nearestExpiry { s += "，最早 \(formatDate("M月d日", e)) 到期" }
+                    if let c = v.cash { s += "，现金余额 ¥" + String(format: "%.2f", c) }
+                    return s
+                }, error: store.glmPackError)
+                Text("填标准 API 的 Key（和编码套餐的 Key 不通用）：显示生效中的 token 资源包剩余合计和现金余额。用的是智谱控制台的非公开接口，智谱改版后可能失效。")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("显示") {
-                Toggle("显示今日用量（今日花费 / 今日 token）", isOn: $showToday)
+                Toggle("显示小字（今日花费 / 今日 token / 现金余额）", isOn: $showToday)
                 Picker("刷新间隔", selection: $minutes) {
                     ForEach([1, 5, 15, 30], id: \.self) { Text("\($0) 分钟").tag($0) }
                 }
