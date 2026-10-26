@@ -5,7 +5,7 @@ import ServiceManagement
 import ApplicationServices
 
 enum SettingsPage: String, Hashable, CaseIterable {
-    case general, layout, appearance, shortcuts, clock, system, todo, schedule, pomodoro, music, countdown, about
+    case general, layout, appearance, shortcuts, clock, system, todo, schedule, pomodoro, music, countdown, aiusage, about
 
     var title: String {
         switch self {
@@ -20,6 +20,7 @@ enum SettingsPage: String, Hashable, CaseIterable {
         case .pomodoro: return "番茄钟"
         case .music: return "正在播放"
         case .countdown: return "倒数日"
+        case .aiusage: return "AI 用量"
         case .about: return "关于"
         }
     }
@@ -37,6 +38,7 @@ enum SettingsPage: String, Hashable, CaseIterable {
         case .pomodoro: return "timer"
         case .music: return "music.note"
         case .countdown: return "hourglass"
+        case .aiusage: return "gauge"
         case .about: return "info.circle"
         }
     }
@@ -58,7 +60,7 @@ struct SettingsView: View {
                     ForEach([SettingsPage.general, .layout, .appearance, .shortcuts], id: \.self) { item($0) }
                 }
                 Section("组件") {
-                    ForEach([SettingsPage.clock, .system, .todo, .schedule, .pomodoro, .music, .countdown], id: \.self) { item($0) }
+                    ForEach([SettingsPage.clock, .system, .todo, .schedule, .pomodoro, .music, .countdown, .aiusage], id: \.self) { item($0) }
                 }
                 Section {
                     item(.about)
@@ -90,6 +92,7 @@ struct SettingsView: View {
         case .pomodoro: PomodoroPane()
         case .music: MusicPane()
         case .countdown: CountdownPane()
+        case .aiusage: AIUsagePane()
         case .about: AboutPane()
         }
     }
