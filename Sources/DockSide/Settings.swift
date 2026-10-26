@@ -57,6 +57,7 @@ enum Pref {
     // AI 用量
     static let aiShowDeepSeek   = "aiShowDeepSeek"
     static let aiShowGLM        = "aiShowGLM"
+    static let aiShowGLMPack    = "aiShowGLMPack"
     static let aiShowToday      = "aiShowToday"
     static let aiGLMRegion      = "aiGLMRegion"       // "cn" | "intl"
     static let aiRefreshMinutes = "aiRefreshMinutes"
@@ -81,7 +82,7 @@ enum Pref {
             pomoShowRing: true, pomoShowLabel: true, pomoShowTime: true,
             musicShowCover: true, musicShowArtist: true, musicShowButtons: true,
             countdownShowName: true, countdownShowLabel: true,
-            aiShowDeepSeek: true, aiShowGLM: true, aiShowToday: true, aiGLMRegion: "cn", aiRefreshMinutes: 5,
+            aiShowDeepSeek: true, aiShowGLM: true, aiShowGLMPack: true, aiShowToday: true, aiGLMRegion: "cn", aiRefreshMinutes: 5,
         ])
     }
 }
