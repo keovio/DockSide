@@ -944,7 +944,13 @@ struct ScheduleWidget: View {
     @AppStorage(Pref.scheduleTitleChars) private var titleChars = 6
     @AppStorage(Pref.scheduleHover) private var hoverExpand = true
     @AppStorage(Pref.schedule24h) private var h24 = true
+    @AppStorage(Pref.scheduleShowTime) private var showTime = true
+    @AppStorage(Pref.scheduleShowDay) private var showDay = true
+    @AppStorage(Pref.scheduleShowTitle) private var showTitlePref = true
+    @AppStorage(Pref.scheduleShowRemain) private var showRemain = true
     @Environment(\.measuring) private var measuring
+    /// 时间和标题都关掉时还是显示标题，组件不会只剩一个空壳
+    private var showTitle: Bool { showTitlePref || !showTime }
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { ctx in
@@ -996,13 +1002,15 @@ struct ScheduleWidget: View {
                         Text("进行中")
                             .font(.system(size: size * 0.8, weight: .semibold, design: .rounded))
                             .opacity(0.9)
-                    } else {
+                    } else if showTime || (showDay && !leadingDay(e).isEmpty) {
                         Text(leadingLabel(e, now: now))
                             .font(.system(size: size * 0.9, weight: .medium, design: .rounded))
                             .opacity(0.9)
                     }
-                    Marquee(text: e.title, width: size * 0.95 * CGFloat(titleChars), fontSize: size * 0.95)
-                    if let tail = trailingLabel(e, now: now) {
+                    if showTitle {
+                        Marquee(text: e.title, width: size * 0.95 * CGFloat(titleChars), fontSize: size * 0.95)
+                    }
+                    if showRemain, let tail = trailingLabel(e, now: now) {
                         Text(tail)
                             .font(.system(size: size * 0.74))
                             .opacity(0.7)
@@ -1018,11 +1026,17 @@ struct ScheduleWidget: View {
 
     /// 时间位文案：进行中由调用方渲染，这里只处理其余情形
     private func leadingLabel(_ e: CalendarEvent, now: Date) -> String {
-        if e.isAllDay { return "全天" }
+        let day = showDay ? leadingDay(e) : ""
+        let time = showTime ? (e.isAllDay ? "全天" : clock(e.start)) : ""
+        return [day, time].filter { !$0.isEmpty }.joined(separator: " ")
+    }
+
+    /// 「明天」「周五」；今天不显示
+    private func leadingDay(_ e: CalendarEvent) -> String {
         let cal = Calendar.current
-        if cal.isDateInToday(e.start) { return clock(e.start) }
-        if cal.isDateInTomorrow(e.start) { return "明天 " + clock(e.start) }
-        return formatDate("EEE ", e.start) + clock(e.start)
+        if cal.isDateInToday(e.start) { return "" }
+        if cal.isDateInTomorrow(e.start) { return "明天" }
+        return formatDate("EEE", e.start)
     }
 
     /// 竖排下方那行（宽度只有 Dock 粗细，尽量短）
