@@ -112,6 +112,9 @@ struct NowPlayingWidget: View {
     @Environment(\.widgetFontSize) private var size
     @Environment(\.compact) private var compact
     @AppStorage(Pref.musicTitleChars) private var titleChars = 7
+    @AppStorage(Pref.musicShowCover) private var showCover = true
+    @AppStorage(Pref.musicShowArtist) private var showArtist = true
+    @AppStorage(Pref.musicShowButtons) private var showButtons = true
     @Environment(\.measuring) private var measuring
 
     var body: some View {
@@ -126,12 +129,12 @@ struct NowPlayingWidget: View {
                 }
             } else {
                 HStack(spacing: size * 0.5) {
-                    cover(size * 2.2)
+                    if showCover { cover(size * 2.2) }
                     VStack(alignment: .leading, spacing: size * 0.05) {
                         let w = size * 0.95 * CGFloat(titleChars)
                         if np.hasTrack {
                             Marquee(text: np.title, width: w, fontSize: size * 0.95)
-                            if !np.artist.isEmpty {
+                            if showArtist, !np.artist.isEmpty {
                                 Marquee(text: np.artist, width: w, fontSize: size * 0.72, semibold: false)
                                     .opacity(0.7)
                             }
@@ -141,7 +144,7 @@ struct NowPlayingWidget: View {
                                 .frame(width: w, alignment: .leading)
                         }
                     }
-                    if np.hasTrack {
+                    if showButtons, np.hasTrack {
                         HStack(spacing: size * 0.6) {
                             button(np.playing ? "pause.fill" : "play.fill", help: np.playing ? "暂停" : "播放") { np.toggle() }
                             button("forward.fill", help: "下一首") { np.next() }
