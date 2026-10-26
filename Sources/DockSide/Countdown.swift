@@ -58,6 +58,8 @@ struct CountdownWidget: View {
     @Environment(\.widgetFontSize) private var size
     @Environment(\.compact) private var compact
     @AppStorage(Pref.countdownChars) private var nameChars = 5
+    @AppStorage(Pref.countdownShowName) private var showName = true
+    @AppStorage(Pref.countdownShowLabel) private var showLabel = true
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { ctx in
@@ -76,11 +78,17 @@ struct CountdownWidget: View {
                         }
                     } else {
                         HStack(alignment: .center, spacing: size * 0.45) {
-                            VStack(alignment: .leading, spacing: size * 0.05) {
-                                Marquee(text: item.name, width: size * 0.8 * CGFloat(nameChars), fontSize: size * 0.8, semibold: false)
-                                    .opacity(0.8)
-                                Text(d == 0 ? "就是今天" : (d > 0 ? "还有" : "已经"))
-                                    .font(.system(size: size * 0.66)).opacity(0.6)
+                            if showName || showLabel {
+                                VStack(alignment: .leading, spacing: size * 0.05) {
+                                    if showName {
+                                        Marquee(text: item.name, width: size * 0.8 * CGFloat(nameChars), fontSize: size * 0.8, semibold: false)
+                                            .opacity(0.8)
+                                    }
+                                    if showLabel {
+                                        Text(d == 0 ? "就是今天" : (d > 0 ? "还有" : "已经"))
+                                            .font(.system(size: size * 0.66)).opacity(0.6)
+                                    }
+                                }
                             }
                             if d != 0 {
                                 HStack(alignment: .firstTextBaseline, spacing: size * 0.1) {
@@ -121,12 +129,18 @@ struct CountdownWidget: View {
 struct CountdownPane: View {
     @ObservedObject private var store = CountdownStore.shared
     @AppStorage(Pref.countdownChars) private var nameChars = 5
+    @AppStorage(Pref.countdownShowName) private var showName = true
+    @AppStorage(Pref.countdownShowLabel) private var showLabel = true
     @State private var name = ""
     @State private var date = Date()
     @State private var yearly = false
 
     var body: some View {
         Form {
+            Section("显示内容") {
+                Toggle("名字", isOn: $showName)
+                Toggle("「还有 / 已经」", isOn: $showLabel)
+            }
             Section("添加") {
                 TextField("名字（比如：生日、放假、考试）", text: $name)
                 DatePicker("日期", selection: $date, displayedComponents: .date)
