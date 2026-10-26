@@ -223,9 +223,14 @@ struct TodoWidget: View {
     @Environment(\.compact) private var compact
     @AppStorage(Pref.todoTitleChars) private var titleChars = 6
     @AppStorage(Pref.todoHover) private var hoverExpand = true
+    @AppStorage(Pref.todoShowRing) private var showRingPref = true
+    @AppStorage(Pref.todoShowTitle) private var showTitle = true
+    @AppStorage(Pref.todoShowCheck) private var showCheck = true
     @Environment(\.measuring) private var measuring
 
     var body: some View {
+        // 进度环和标题都关掉时至少留进度环，组件不会变成空的
+        let showRing = showRingPref || !showTitle
         let pending = store.pending
         let total = store.items.count
         let done = total - pending.count
@@ -238,9 +243,12 @@ struct TodoWidget: View {
                 }
             } else {
                 HStack(spacing: size * 0.55) {
-                    ProgressRing(progress: progress, size: size * 2.45, lineWidth: size * 0.17) {
-                        Text("\(done)/\(total)").font(.system(size: size * 0.66, weight: .bold, design: .rounded)).minimumScaleFactor(0.7)
+                    if showRing {
+                        ProgressRing(progress: progress, size: size * 2.45, lineWidth: size * 0.17) {
+                            Text("\(done)/\(total)").font(.system(size: size * 0.66, weight: .bold, design: .rounded)).minimumScaleFactor(0.7)
+                        }
                     }
+                    if showTitle {
                     VStack(alignment: .leading, spacing: size * 0.08) {
                         if let first = pending.first {
                             Marquee(text: first.title, width: size * 0.95 * CGFloat(titleChars), fontSize: size * 0.95)
@@ -252,7 +260,8 @@ struct TodoWidget: View {
                             }
                         }
                     }
-                    if let first = pending.first {
+                    }
+                    if showCheck, let first = pending.first {
                         Image(systemName: "circle")
                             .font(.system(size: size * 1.1, weight: .light))
                             .contentShape(Rectangle())
