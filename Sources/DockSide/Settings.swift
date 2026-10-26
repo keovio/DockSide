@@ -35,6 +35,25 @@ enum Pref {
     static let glassTint    = "glassTint"
     static let musicTitleChars = "musicTitleChars"
     static let countdownChars = "countdownChars"
+    // 组件显示内容（只影响横排；竖排紧凑版不变）
+    static let clockDate        = "clockDate"
+    static let clockWeekday     = "clockWeekday"
+    static let metricIcon       = "metricIcon"
+    static let todoShowRing     = "todoShowRing"
+    static let todoShowTitle    = "todoShowTitle"
+    static let todoShowCheck    = "todoShowCheck"
+    static let scheduleShowTime   = "scheduleShowTime"
+    static let scheduleShowDay    = "scheduleShowDay"
+    static let scheduleShowTitle  = "scheduleShowTitle"
+    static let scheduleShowRemain = "scheduleShowRemain"
+    static let pomoShowRing     = "pomoShowRing"
+    static let pomoShowLabel    = "pomoShowLabel"
+    static let pomoShowTime     = "pomoShowTime"
+    static let musicShowCover   = "musicShowCover"
+    static let musicShowArtist  = "musicShowArtist"
+    static let musicShowButtons = "musicShowButtons"
+    static let countdownShowName  = "countdownShowName"
+    static let countdownShowLabel = "countdownShowLabel"
 
     static func register() {
         UserDefaults.standard.register(defaults: [
@@ -48,6 +67,12 @@ enum Pref {
             scheduleLastRung: "", scheduleLastImport: "", scheduleDismissDeniedTip: false,
             alignTop: 0.0, alignBottom: 0.0, dockGap: 4.0, glassTint: 0.38,
             musicTitleChars: 7, countdownChars: 5,
+            clockDate: false, clockWeekday: false, metricIcon: true,
+            todoShowRing: true, todoShowTitle: true, todoShowCheck: true,
+            scheduleShowTime: true, scheduleShowDay: true, scheduleShowTitle: true, scheduleShowRemain: true,
+            pomoShowRing: true, pomoShowLabel: true, pomoShowTime: true,
+            musicShowCover: true, musicShowArtist: true, musicShowButtons: true,
+            countdownShowName: true, countdownShowLabel: true,
         ])
     }
 }
