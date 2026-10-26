@@ -514,7 +514,9 @@ enum ScheduleFilter {
         let showAllDay = UserDefaults.standard.object(forKey: Pref.scheduleShowAllDay) as? Bool ?? true
         return events.filter { e in
             if !showAllDay, e.isAllDay { return false }
-            if !picked.isEmpty, !e.calendarName.isEmpty, !picked.contains(e.calendarName) { return false }
+            // 日历筛选只管系统日历里的事件；本地/导入的日程（ekEventID == nil）始终显示，
+            // 否则只勾一个系统日历就会把导入的日程全藏起来，看起来像被清空了
+            if !picked.isEmpty, e.ekEventID != nil, !picked.contains(e.calendarName) { return false }
             return true
         }
         .sorted(by: eventSort)
@@ -1256,6 +1258,7 @@ struct SchedulePopoverView: View {
             if all { set.removeAll() }
             else if set.contains(title) { set.remove(title) } else { set.insert(title) }
             ScheduleFilter.setSelected(set)
+            store.objectWillChange.send()
         } label: {
             HStack(spacing: 4) {
                 if showColor, let c = color {
