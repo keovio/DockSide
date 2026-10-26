@@ -10,8 +10,17 @@ func formatDate(_ pattern: String, _ date: Date) -> String {
 struct ClockWidget: View {
     @AppStorage(Pref.clockSeconds) private var seconds = true
     @AppStorage(Pref.clock24h) private var h24 = true
+    @AppStorage(Pref.clockDate) private var showDate = false
+    @AppStorage(Pref.clockWeekday) private var showWeekday = false
     @Environment(\.compact) private var compact
     @Environment(\.widgetFontSize) private var size
+
+    private var prefix: String {
+        var p: [String] = []
+        if showDate { p.append("M月d日") }
+        if showWeekday { p.append("EEE") }
+        return p.isEmpty ? "" : p.joined(separator: " ") + " "
+    }
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { ctx in
@@ -22,7 +31,12 @@ struct ClockWidget: View {
                 }
                 .font(.system(size: size * 1.1, weight: .semibold, design: .rounded))
             } else {
-                Text(formatDate((h24 ? "HH:mm" : "h:mm") + (seconds ? ":ss" : ""), ctx.date))
+                HStack(spacing: 0) {
+                    if !prefix.isEmpty {
+                        Text(formatDate(prefix, ctx.date)).opacity(0.8)
+                    }
+                    Text(formatDate((h24 ? "HH:mm" : "h:mm") + (seconds ? ":ss" : ""), ctx.date))
+                }
             }
         }
         .modifier(WidgetText())
@@ -52,6 +66,7 @@ struct DateWidget: View {
 struct MetricWidget: View {
     let every: TimeInterval
     let value: () -> (symbol: String, text: String)
+    @AppStorage(Pref.metricIcon) private var showIcon = true
     @Environment(\.compact) private var compact
     @Environment(\.widgetFontSize) private var size
 
@@ -65,7 +80,7 @@ struct MetricWidget: View {
                 }
             } else {
                 HStack(spacing: size * 0.35) {
-                    Image(systemName: v.symbol).opacity(0.85)
+                    if showIcon { Image(systemName: v.symbol).opacity(0.85) }
                     Text(v.text)
                 }
             }
