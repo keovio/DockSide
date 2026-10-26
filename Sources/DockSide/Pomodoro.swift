@@ -232,6 +232,9 @@ struct PomodoroWidget: View {
     @ObservedObject private var pomo = Pomodoro.shared
     @Environment(\.widgetFontSize) private var size
     @Environment(\.compact) private var compact
+    @AppStorage(Pref.pomoShowRing) private var showRingPref = true
+    @AppStorage(Pref.pomoShowLabel) private var showLabel = true
+    @AppStorage(Pref.pomoShowTime) private var showTime = true
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 0.5)) { ctx in
@@ -279,15 +282,22 @@ struct PomodoroWidget: View {
                 Text(pomo.timeText).font(.system(size: size * 0.72, weight: .semibold, design: .rounded))
             }
         } else {
+            let showRing = showRingPref || (!showTime && !showLabel)   // 全关时留进度环
             HStack(spacing: size * 0.5) {
-                ProgressRing(progress: pomo.progress, size: size * 1.5, lineWidth: size * 0.15, color: pomo.color) {
-                    icon.font(.system(size: size * 0.5))
+                if showRing {
+                    ProgressRing(progress: pomo.progress, size: size * 1.5, lineWidth: size * 0.15, color: pomo.color) {
+                        icon.font(.system(size: size * 0.5))
+                    }
                 }
-                Text(pomo.label)
-                    .font(.system(size: size * 0.85, weight: .semibold, design: .rounded))
-                    .foregroundStyle(pomo.color)
-                Text(pomo.timeText)
-                    .font(.system(size: size * 1.15, weight: .bold, design: .rounded))
+                if showLabel {
+                    Text(pomo.label)
+                        .font(.system(size: size * 0.85, weight: .semibold, design: .rounded))
+                        .foregroundStyle(pomo.color)
+                }
+                if showTime {
+                    Text(pomo.timeText)
+                        .font(.system(size: size * 1.15, weight: .bold, design: .rounded))
+                }
             }
         }
     }
