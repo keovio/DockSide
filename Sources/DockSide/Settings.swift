@@ -54,6 +54,14 @@ enum Pref {
     static let musicShowButtons = "musicShowButtons"
     static let countdownShowName  = "countdownShowName"
     static let countdownShowLabel = "countdownShowLabel"
+    // AI 用量
+    static let aiShowDeepSeek   = "aiShowDeepSeek"
+    static let aiShowGLM        = "aiShowGLM"
+    static let aiShowToday      = "aiShowToday"
+    static let aiGLMRegion      = "aiGLMRegion"       // "cn" | "intl"
+    static let aiRefreshMinutes = "aiRefreshMinutes"
+    static let aiDSDay          = "aiDSDay"           // 今日花费的起点：日期+币种
+    static let aiDSDayStart     = "aiDSDayStart"      // 今日起点余额
 
     static func register() {
         UserDefaults.standard.register(defaults: [
@@ -73,6 +81,7 @@ enum Pref {
             pomoShowRing: true, pomoShowLabel: true, pomoShowTime: true,
             musicShowCover: true, musicShowArtist: true, musicShowButtons: true,
             countdownShowName: true, countdownShowLabel: true,
+            aiShowDeepSeek: true, aiShowGLM: true, aiShowToday: true, aiGLMRegion: "cn", aiRefreshMinutes: 5,
         ])
     }
 }
