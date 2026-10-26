@@ -2,7 +2,7 @@ name: Build DockSide.app
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]   # dev 只编译检查，不发版本
   workflow_dispatch:
 
 permissions:
@@ -29,9 +29,11 @@ jobs:
           gh issue create --title "构建失败 #${{ github.run_number }}" --body-file report.md
 
       - name: Zip app
+        if: github.ref == 'refs/heads/main'
         run: cd build && ditto -c -k --keepParent DockSide.app DockSide.zip
 
       - name: Publish release
+        if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
