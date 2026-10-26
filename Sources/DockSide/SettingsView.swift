@@ -188,6 +188,8 @@ struct AppearancePane: View {
 struct ClockPane: View {
     @AppStorage(Pref.clockSeconds) private var seconds = true
     @AppStorage(Pref.clock24h) private var h24 = true
+    @AppStorage(Pref.clockDate) private var showDate = false
+    @AppStorage(Pref.clockWeekday) private var showWeekday = false
 
     var body: some View {
         Form {
@@ -195,8 +197,10 @@ struct ClockPane: View {
                 Toggle("显示秒", isOn: $seconds)
                 Toggle("24 小时制", isOn: $h24)
             }
-            Section("日期") {
-                Text("横排显示「月日 星期」，竖排显示「月/日」和星期。").foregroundStyle(.secondary)
+            Section("显示内容") {
+                Toggle("在时间前显示日期", isOn: $showDate)
+                Toggle("在时间前显示星期", isOn: $showWeekday)
+                Text("只影响 Dock 在底部时的横排样式。").font(.caption).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
@@ -204,8 +208,14 @@ struct ClockPane: View {
 }
 
 struct SystemPane: View {
+    @AppStorage(Pref.metricIcon) private var showIcon = true
+
     var body: some View {
         Form {
+            Section("显示内容") {
+                Toggle("CPU / 内存 / 电量 显示图标", isOn: $showIcon)
+                Text("关掉后只显示百分比，更省地方。").font(.caption).foregroundStyle(.secondary)
+            }
             Section("刷新频率") {
                 LabeledContent("CPU", value: "每 2 秒")
                 LabeledContent("内存", value: "每 5 秒")
@@ -221,9 +231,17 @@ struct TodoPane: View {
     @AppStorage(Pref.todoHover) private var hover = true
     @AppStorage(Pref.todoSound) private var sound = true
     @AppStorage(Pref.todoAutoClear) private var autoClear = true
+    @AppStorage(Pref.todoShowRing) private var showRing = true
+    @AppStorage(Pref.todoShowTitle) private var showTitle = true
+    @AppStorage(Pref.todoShowCheck) private var showCheck = true
 
     var body: some View {
         Form {
+            Section("显示内容") {
+                Toggle("进度环", isOn: $showRing)
+                Toggle("第一条待办标题", isOn: $showTitle)
+                Toggle("完成按钮", isOn: $showCheck)
+            }
             Section("Dock 旁显示") {
                 Picker("标题宽度", selection: $titleChars) {
                     ForEach([4, 6, 8, 10, 12], id: \.self) { Text("\($0) 个字").tag($0) }
@@ -263,11 +281,22 @@ struct SchedulePane: View {
     @AppStorage(Pref.scheduleShowCalendarColor) private var showColor = true
     @AppStorage(Pref.scheduleSound) private var sound = false
     @AppStorage(Pref.scheduleLastImport) private var lastImport = ""
+    @AppStorage(Pref.scheduleShowTime) private var showTime = true
+    @AppStorage(Pref.scheduleShowDay) private var showDay = true
+    @AppStorage(Pref.scheduleShowTitle) private var showTitle = true
+    @AppStorage(Pref.scheduleShowRemain) private var showRemain = true
     @ObservedObject private var store = ScheduleStore.shared
     private let authTimer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
     var body: some View {
         Form {
+            Section("显示内容") {
+                Toggle("时间（09:00 / 全天）", isOn: $showTime)
+                Toggle("「明天」「周五」", isOn: $showDay)
+                Toggle("标题", isOn: $showTitle)
+                Toggle("快开始 / 进行中的剩余时间", isOn: $showRemain)
+                Text("关掉的部分不占宽度。时间和标题都关掉时仍会显示标题。").font(.caption).foregroundStyle(.secondary)
+            }
             Section("Dock 旁显示") {
                 Picker("标题宽度", selection: $titleChars) {
                     ForEach([4, 6, 8, 10, 12], id: \.self) { Text("\($0) 个字").tag($0) }
@@ -384,10 +413,18 @@ struct PomodoroPane: View {
     @AppStorage(Pref.pomoBreak) private var rest = 5
     @AppStorage(Pref.pomoSound) private var sound = true
     @AppStorage(Pref.pomoAutoNext) private var autoNext = true
+    @AppStorage(Pref.pomoShowRing) private var showRing = true
+    @AppStorage(Pref.pomoShowLabel) private var showLabel = true
+    @AppStorage(Pref.pomoShowTime) private var showTime = true
     @ObservedObject private var pomo = Pomodoro.shared
 
     var body: some View {
         Form {
+            Section("显示内容") {
+                Toggle("进度环", isOn: $showRing)
+                Toggle("模式名（专注 / 休息…）", isOn: $showLabel)
+                Toggle("剩余时间", isOn: $showTime)
+            }
             Section("开始") {
                 HStack {
                     Button("番茄钟") { pomo.startFocus() }
@@ -456,9 +493,17 @@ enum SettingsWindow {
 
 struct MusicPane: View {
     @AppStorage(Pref.musicTitleChars) private var titleChars = 7
+    @AppStorage(Pref.musicShowCover) private var showCover = true
+    @AppStorage(Pref.musicShowArtist) private var showArtist = true
+    @AppStorage(Pref.musicShowButtons) private var showButtons = true
 
     var body: some View {
         Form {
+            Section("显示内容") {
+                Toggle("封面", isOn: $showCover)
+                Toggle("歌手", isOn: $showArtist)
+                Toggle("播放 / 下一首按钮", isOn: $showButtons)
+            }
             Section {
                 Picker("歌名宽度", selection: $titleChars) {
                     ForEach([4, 6, 7, 8, 10, 12], id: \.self) { Text("\($0) 个字").tag($0) }
